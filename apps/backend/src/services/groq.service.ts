@@ -8,14 +8,24 @@
 import { groqClient, GROQ_MODEL, GROQ_MAX_TOKENS } from '../config/groq'
 
 // ─── JD EXTRACTION ────────────────────────────────────────
-// Extracts structured data from raw job description text
-export async function extractJDData(jdText: string): Promise<Record<string, unknown> | null> {
+// Extracts structured data from raw job description text.
+// The `maxTokens` option lets the anonymous landing-page demo run a
+// cheaper call (800 tokens) while authenticated reports use the full
+// budget (4000 tokens). Declared tokens count against Groq's free-tier
+// TPM budget regardless of what the model actually generates, so this
+// matters.
+export async function extractJDData(
+  jdText: string,
+  options: { maxTokens?: number } = {}
+): Promise<Record<string, unknown> | null> {
   if (!groqClient) return null
+
+  const maxTokens = options.maxTokens ?? GROQ_MAX_TOKENS
 
   try {
     const completion = await groqClient.chat.completions.create({
       model: GROQ_MODEL,
-      max_tokens: GROQ_MAX_TOKENS,
+      max_tokens: maxTokens,
       messages: [
         {
           role: 'system',
@@ -49,7 +59,6 @@ ${jdText}`,
     const content = completion.choices[0]?.message?.content
     if (!content) return null
 
-    // Clean and parse JSON — remove any accidental markdown
     const cleaned = content.replace(/```json|```/g, '').trim()
     return JSON.parse(cleaned)
   } catch (error) {
@@ -59,7 +68,6 @@ ${jdText}`,
 }
 
 // ─── CV MATCH ─────────────────────────────────────────────
-// Compares CV text against JD and returns structured analysis
 export async function matchCVtoJD(
   cvText: string,
   jdText: string
@@ -112,7 +120,6 @@ ${jdText}`,
 }
 
 // ─── BULLET REWRITE ───────────────────────────────────────
-// Rewrites a single CV bullet point to match JD language
 export async function rewriteBullet(
   originalBullet: string,
   jdContext: string
@@ -152,7 +159,6 @@ Return only the rewritten bullet:`,
 }
 
 // ─── SUMMARY GENERATOR ────────────────────────────────────
-// Generates a professional CV summary
 export async function generateSummary(
   background: string,
   targetRole: string
@@ -190,7 +196,6 @@ Return only the summary:`,
 }
 
 // ─── ANALYTICS INSIGHTS ───────────────────────────────────
-// Generates plain english insights from job hunt data
 export async function generateAnalyticsInsights(
   stats: Record<string, unknown>
 ): Promise<string[] | null> {

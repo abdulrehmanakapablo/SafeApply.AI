@@ -3,6 +3,7 @@
 // BACKEND: GET /api/tracker, GET /api/reports/history, GET /api/analytics
 // PURPOSE: Dashboard overview — stat cards, recent applications, funnel, and
 //          a card for every service in the app.
+// No mock data — empty states shown for new accounts.
 
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
@@ -62,8 +63,8 @@ function statusStyle(s: string): StatusStyle {
   return STATUS_STYLES[s as StatusKey] || STATUS_STYLES.saved
 }
 
-// ─── View model + demo fallback ─────────────────────────
-interface DemoApplication {
+// ─── View models ────────────────────────────────────────
+interface DashboardApplication {
   id: string
   company: string
   role: string
@@ -72,7 +73,7 @@ interface DemoApplication {
   match_score: number
 }
 
-interface DemoStats {
+interface DashboardStats {
   total_applications: number
   response_rate: number
   reports_run: number
@@ -80,20 +81,12 @@ interface DemoStats {
   cv_matches: number
 }
 
-const DEMO_APPLICATIONS: DemoApplication[] = [
-  { id: 'd1', company: 'Stripe', role: 'Senior Frontend Engineer', status: 'interviewing', applied_label: 'Applied 2 days ago', match_score: 96 },
-  { id: 'd2', company: 'Linear', role: 'Staff Product Designer', status: 'screening', applied_label: 'Applied 5 days ago', match_score: 92 },
-  { id: 'd3', company: 'Supabase', role: 'Developer Advocate', status: 'offered', applied_label: 'Applied 1 week ago', match_score: 98 },
-  { id: 'd4', company: 'Vercel', role: 'Cloud Infrastructure Engineer', status: 'rejected', applied_label: 'Applied 2 weeks ago', match_score: 88 },
-  { id: 'd5', company: 'Datadog', role: 'Software Engineer II', status: 'applied', applied_label: 'Applied 3 weeks ago', match_score: 94 },
-]
-
-const DEMO_STATS: DemoStats = {
-  total_applications: 24,
-  response_rate: 37.5,
-  reports_run: 18,
+const EMPTY_STATS: DashboardStats = {
+  total_applications: 0,
+  response_rate: 0,
+  reports_run: 0,
   reports_quota: 30,
-  cv_matches: 12,
+  cv_matches: 0,
 }
 
 // ─── Helpers ────────────────────────────────────────────
@@ -109,7 +102,7 @@ function daysAgo(iso: string): string {
   return `Applied ${Math.floor(d / 30)} month${d >= 60 ? 's' : ''} ago`
 }
 
-function toDemoApplication(app: Application): DemoApplication {
+function toDashboardApplication(app: Application): DashboardApplication {
   return {
     id: app.id,
     company: app.company_name,
@@ -120,10 +113,10 @@ function toDemoApplication(app: Application): DemoApplication {
   }
 }
 
-// ─── Pure data fetch (outside component) ────────────────
+// ─── Data fetch ─────────────────────────────────────────
 async function fetchDashboardData(): Promise<{
-  applications: DemoApplication[]
-  stats: DemoStats
+  applications: DashboardApplication[]
+  stats: DashboardStats
 }> {
   const [trackerRes, reportRes, analyticsRes] = await Promise.allSettled([
     getApplications({ page: 1 }),
@@ -131,8 +124,8 @@ async function fetchDashboardData(): Promise<{
     getAnalytics('30d'),
   ])
 
-  let nextApplications: DemoApplication[] | null = null
-  const nextStats: DemoStats = { ...DEMO_STATS }
+  let applications: DashboardApplication[] = []
+  const stats: DashboardStats = { ...EMPTY_STATS }
 
   if (
     trackerRes.status === 'fulfilled' &&
@@ -140,15 +133,15 @@ async function fetchDashboardData(): Promise<{
     trackerRes.value.data &&
     trackerRes.value.data.length > 0
   ) {
-    nextApplications = trackerRes.value.data.slice(0, 5).map(toDemoApplication)
-    nextStats.total_applications =
+    applications = trackerRes.value.data.slice(0, 5).map(toDashboardApplication)
+    stats.total_applications =
       trackerRes.value.total || trackerRes.value.data.length
   }
 
   if (reportRes.status === 'fulfilled' && reportRes.value.success) {
     const totalReports = reportRes.value.total
     if (typeof totalReports === 'number' && totalReports > 0) {
-      nextStats.reports_run = totalReports
+      stats.reports_run = totalReports
     }
   }
 
@@ -158,15 +151,12 @@ async function fetchDashboardData(): Promise<{
     analyticsRes.value.data
   ) {
     const a = analyticsRes.value.data
-    if (a.response_rate > 0) nextStats.response_rate = a.response_rate
+    if (a.response_rate > 0) stats.response_rate = a.response_rate
     if (a.total_applications > 0)
-      nextStats.total_applications = a.total_applications
+      stats.total_applications = a.total_applications
   }
 
-  return {
-    applications: nextApplications ?? DEMO_APPLICATIONS,
-    stats: nextStats,
-  }
+  return { applications, stats }
 }
 
 // ─── Service card definition ────────────────────────────
@@ -177,7 +167,6 @@ interface ServiceCard {
   body: string
   cta: string
   badge?: string
-  external?: boolean
 }
 
 interface ServiceGroup {
@@ -468,9 +457,8 @@ function ServiceTile({ service }: { service: ServiceCard }) {
 // ─── Main component ─────────────────────────────────────
 export default function Dashboard() {
   const user = useAuthStore((s) => s.user)
-  const [stats, setStats] = useState<DemoStats>(DEMO_STATS)
-  const [applications, setApplications] =
-    useState<DemoApplication[]>(DEMO_APPLICATIONS)
+  const [stats, setStats] = useState<DashboardStats>(EMPTY_STATS)
+  const [applications, setApplications] = useState<DashboardApplication[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshedAt, setRefreshedAt] = useState<Date>(new Date())
 
@@ -524,10 +512,10 @@ export default function Dashboard() {
     { label: 'Archived', count: funnelCounts.archived, color: '#737373' },
   ]
 
-  const reportsPct = Math.min(
-    100,
-    Math.round((stats.reports_run / stats.reports_quota) * 100)
-  )
+  const reportsPct =
+    stats.reports_quota > 0
+      ? Math.min(100, Math.round((stats.reports_run / stats.reports_quota) * 100))
+      : 0
 
   const todayStr = refreshedAt.toLocaleTimeString('en-US', {
     hour: '2-digit',
@@ -597,19 +585,17 @@ export default function Dashboard() {
             label="Total Applications"
             value={String(stats.total_applications)}
             icon="send_time_extension"
-            trend="+12%"
-            trendPositive
-            footerLeft="vs. last cycle"
+            footerLeft="Tracked in your pipeline"
             footerRight={`${applications.length} recent`}
           />
           <StatCard
             label="Response Rate"
             value={`${stats.response_rate}%`}
             icon="mark_email_read"
-            trend="+5.2%"
-            trendPositive
             footerLeft="Industry avg: 8.4%"
-            footerRight="Top 5th percentile"
+            footerRight={
+              stats.response_rate > 8.4 ? 'Above average' : 'Room to grow'
+            }
           />
           <StatCard
             label="Reports Run"
@@ -627,7 +613,9 @@ export default function Dashboard() {
             value={String(stats.cv_matches)}
             icon="hub"
             footerLeft="Across all roles"
-            footerRight="91% avg score"
+            footerRight={
+              stats.cv_matches > 0 ? 'View in Analytics' : 'None yet'
+            }
           />
         </section>
 
@@ -675,7 +663,7 @@ export default function Dashboard() {
                   No applications yet
                 </p>
                 <p className="text-xs text-[#737373] mb-4">
-                  Add your first application to start tracking.
+                  Add your first application to start tracking your pipeline.
                 </p>
                 <Link
                   to="/dashboard/tracker"
@@ -690,7 +678,7 @@ export default function Dashboard() {
                   <thead>
                     <tr className="bg-black text-[#737373] text-[11px] uppercase tracking-wider">
                       <th className="py-2.5 px-4 font-semibold">
-                        Target Entity & Position
+                        Company & Position
                       </th>
                       <th className="py-2.5 px-4 font-semibold hidden sm:table-cell">
                         Timeline
@@ -771,7 +759,7 @@ export default function Dashboard() {
             <div className="flex flex-col gap-1">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[11px] uppercase tracking-wider text-[#737373] font-semibold">
-                  Audited Pipeline Distribution
+                  Pipeline Distribution
                 </span>
                 <span className="material-symbols-outlined text-[18px] text-[#22c55e]">
                   pie_chart

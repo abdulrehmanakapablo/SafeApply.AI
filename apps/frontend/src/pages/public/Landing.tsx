@@ -1,18 +1,22 @@
 // FILE: src/pages/public/Landing.tsx
 
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import Logo from '../../components/ui/Logo'
 import SEO from '../../components/SEO'
 
 interface ExtractedJD {
   role: string | null
   seniority: string | null
+  experience_years: number | null
   required_skills: string[]
   nice_to_have_skills: string[]
+  salary_mentioned: boolean
   salary_text: string | null
   location: string | null
   remote: boolean | null
+  employment_type: string | null
+  company_name: string | null
 }
 
 const FEATURES = [
@@ -25,8 +29,8 @@ const FEATURES = [
 ]
 
 const FREE_FEATURES = [
-  { label: '3 Company reports per month', included: true },
-  { label: 'Basic JD data extraction', included: true },
+  { label: '3 company reports per month', included: true },
+  { label: '1 free JD extraction per month', included: true },
   { label: '1 CV match per month', included: true },
   { label: 'Track up to 5 applications', included: true },
   { label: 'Read company reviews', included: true },
@@ -39,7 +43,7 @@ const FREE_FEATURES = [
 
 const PRO_FEATURES = [
   { label: 'Unlimited company reports' },
-  { label: 'Full JD extraction and analysis' },
+  { label: 'Unlimited JD extraction' },
   { label: 'Unlimited CV matches and rewrites' },
   { label: 'Ghost posting detection and timeline' },
   { label: 'Full company intel — news, GitHub, funding' },
@@ -102,40 +106,72 @@ function StarRating({ rating }: { rating: number }) {
   )
 }
 
-const DEFAULT_JD = 'We are seeking a Staff Infrastructure Engineer to design our Kubernetes orchestration fleet. Requirements: Go, Rust, eBPF, Distributed Consensus (Raft), AWS, Prometheus. Nice to have: Terraform, Linux Kernel tuning. Base salary range: $195k - $240k. Location: San Francisco, CA (Hybrid).'
+const DEFAULT_JD =
+  'We are seeking a Staff Infrastructure Engineer to design our Kubernetes orchestration fleet. Requirements: Go, Rust, eBPF, Distributed Consensus (Raft), AWS, Prometheus. Nice to have: Terraform, Linux Kernel tuning. Base salary range: $195k - $240k. Location: San Francisco, CA (Hybrid).'
 
-const FALLBACK_EXTRACTED: ExtractedJD = {
-  role: 'Staff Infrastructure Engineer',
-  seniority: 'senior',
-  required_skills: ['Go', 'Rust', 'eBPF', 'Raft Consensus', 'AWS', 'Prometheus'],
-  nice_to_have_skills: ['Terraform', 'Linux Kernel Tuning'],
-  salary_text: '$195k - $240k',
-  location: 'San Francisco, CA',
-  remote: false,
-}
+// localStorage flag — a UX shortcut so the button says "Sign up" on the
+// second visit without waiting on the API. The real limit is enforced
+// server-side per IP, so clearing this doesn't grant extra tries.
+const DEMO_USED_KEY = 'safeapply_demo_jd_used'
 
 export default function Landing() {
+  const navigate = useNavigate()
   const [jdText, setJdText] = useState(DEFAULT_JD)
   const [loading, setLoading] = useState(false)
   const [extracted, setExtracted] = useState<ExtractedJD | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const [demoUsed, setDemoUsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false
+    return localStorage.getItem(DEMO_USED_KEY) === '1'
+  })
 
   async function handleExtract() {
-    if (!jdText.trim()) return
+    if (!jdText.trim() || loading) return
+
+    // Second click → straight to signup, no API call, no wasted tokens
+    if (demoUsed) {
+      navigate('/signup?reason=demo_used')
+      return
+    }
+
     setLoading(true)
+    setError(null)
+
     try {
-      const res = await fetch('/api/reports/analyze', {
+      const res = await fetch('/api/reports/demo-extract', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ jd_text: jdText }),
       })
+
       const data = await res.json()
-      if (data.success && data.data?.report_data?.extracted_jd) {
-        setExtracted(data.data.report_data.extracted_jd)
-      } else {
-        setExtracted(FALLBACK_EXTRACTED)
+
+      // Backend IP rate-limit hit — visitor cleared localStorage but
+      // their IP is still blocked. Push them to signup.
+      if (res.status === 429 || data?.code === 'DEMO_EXHAUSTED') {
+        localStorage.setItem(DEMO_USED_KEY, '1')
+        setDemoUsed(true)
+        navigate('/signup?reason=demo_used')
+        return
       }
+
+      if (!res.ok || !data?.success) {
+        setError(data?.error || 'Extraction failed. Please try again.')
+        return
+      }
+
+      const jd = data.data?.extracted_jd as ExtractedJD | undefined
+      if (!jd) {
+        setError('Extraction returned no data. Please try again.')
+        return
+      }
+
+      setExtracted(jd)
+      localStorage.setItem(DEMO_USED_KEY, '1')
+      setDemoUsed(true)
     } catch {
-      setExtracted(FALLBACK_EXTRACTED)
+      setError('Network error. Please check your connection and try again.')
     } finally {
       setLoading(false)
     }
@@ -162,7 +198,7 @@ export default function Landing() {
 
       <div className="flex flex-col w-full min-h-screen bg-[#0e0e0e] text-[#e5e2e1]">
 
-        {/* NAVBAR — fixed, semi-transparent with backdrop blur so it stays visibly on top */}
+        {/* NAVBAR */}
         <header className="fixed top-0 left-0 right-0 z-50 bg-[#0e0e0e]/80 backdrop-blur-md border-b border-white/10">
           <div className="h-16 max-w-[80rem] mx-auto px-4 flex items-center justify-between">
             <Logo className="h-8 w-auto" />
@@ -215,7 +251,7 @@ export default function Landing() {
             </div>
             <div className="flex flex-col sm:flex-row items-center gap-2 mt-6 pt-4 border-t border-white/10 text-[#869585] text-xs">
               <div className="flex text-[#22c55e]">
-                {[1,2,3,4,5].map((i) => (
+                {[1, 2, 3, 4, 5].map((i) => (
                   <span key={i} className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
                 ))}
               </div>
@@ -278,7 +314,9 @@ export default function Landing() {
             <div className="text-center max-w-xl mb-10">
               <span className="text-xs font-semibold text-[#22c55e] uppercase tracking-widest block mb-2">INTERACTIVE DEMO</span>
               <h2 className="text-3xl font-bold text-white">Try it right now — no account needed</h2>
-              <p className="text-sm text-[#869585] mt-1">Paste any job description to extract structured data instantly.</p>
+              <p className="text-sm text-[#869585] mt-1">
+                One free extraction per visitor. Sign up to unlock full reports.
+              </p>
             </div>
             <div className="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
               {/* Input */}
@@ -291,45 +329,79 @@ export default function Landing() {
                   </span>
                 </div>
                 <textarea
+                  aria-label="Job description to extract data from"
                   className="w-full bg-[#1c1b1b] border border-white/10 rounded p-3 text-sm text-[#e5e2e1] placeholder:text-[#869585] focus:border-[#22c55e] focus:outline-none transition-colors resize-none font-mono"
                   rows={8}
                   value={jdText}
                   onChange={(e) => setJdText(e.target.value)}
                   placeholder="Paste any job description here..."
+                  disabled={demoUsed || loading}
                 />
-                <button
-                  onClick={handleExtract}
-                  disabled={loading}
-                  className="w-full py-3 bg-[#22c55e] hover:bg-[#4be277] text-[#003915] text-sm font-semibold rounded transition-colors flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
-                >
-                  {loading ? (
-                    <>
-                      <span className="material-symbols-outlined text-[18px] animate-spin">sync</span>
-                      <span>Extracting...</span>
-                    </>
-                  ) : (
-                    <>
-                      <span className="material-symbols-outlined text-[18px]">bolt</span>
-                      <span>Extract JD Data Free</span>
-                    </>
-                  )}
-                </button>
+
+                {error && (
+                  <div className="bg-[#EF4444]/10 border border-[#EF4444]/30 rounded p-2 flex items-start gap-2">
+                    <span className="material-symbols-outlined text-[#EF4444] text-[16px] shrink-0 mt-0.5">
+                      error
+                    </span>
+                    <p className="text-xs text-[#EF4444]">{error}</p>
+                  </div>
+                )}
+
+                {demoUsed ? (
+                  <button
+                    type="button"
+                    onClick={() => navigate('/signup?reason=demo_used')}
+                    className="w-full py-3 bg-[#22c55e] hover:bg-[#4be277] text-[#003915] text-sm font-semibold rounded transition-colors flex items-center justify-center gap-2"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">person_add</span>
+                    <span>Sign up to continue</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleExtract}
+                    disabled={loading || !jdText.trim()}
+                    className="w-full py-3 bg-[#22c55e] hover:bg-[#4be277] text-[#003915] text-sm font-semibold rounded transition-colors flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {loading ? (
+                      <>
+                        <span className="material-symbols-outlined text-[18px] animate-spin">sync</span>
+                        <span>Extracting...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="material-symbols-outlined text-[18px]">bolt</span>
+                        <span>Extract JD Data Free</span>
+                      </>
+                    )}
+                  </button>
+                )}
+
+                {!demoUsed && (
+                  <p className="text-[10px] text-[#869585] text-center uppercase tracking-wider font-mono">
+                    1 free extraction per visitor · no signup required
+                  </p>
+                )}
               </div>
 
               {/* Output */}
               <div className="bg-[#0e0e0e] border border-white/10 rounded-lg p-4 flex flex-col gap-4 min-h-[300px]">
                 <div className="flex items-center justify-between border-b border-white/10 pb-2">
                   <span className="text-xs text-[#869585] uppercase font-mono">PARSED OUTPUT</span>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-[#22c55e]/10 text-[#22c55e] border border-[#22c55e]/20 uppercase font-semibold">JSON</span>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-[#22c55e]/10 text-[#22c55e] border border-[#22c55e]/20 uppercase font-semibold">
+                    JSON
+                  </span>
                 </div>
                 {extracted ? (
                   <div className="flex flex-col gap-4">
                     <div className="flex flex-col gap-1">
                       <span className="text-xs text-[#869585] uppercase font-mono">ROLE AND SENIORITY</span>
-                      <div className="flex items-center justify-between">
-                        <span className="text-base font-semibold text-white font-mono">{extracted.role || '—'}</span>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-base font-semibold text-white font-mono truncate">
+                          {extracted.role || '—'}
+                        </span>
                         {extracted.seniority && (
-                          <span className="px-2 py-0.5 rounded bg-[#201f1f] border border-white/10 text-[#bccbb9] text-[11px] font-mono">
+                          <span className="px-2 py-0.5 rounded bg-[#201f1f] border border-white/10 text-[#bccbb9] text-[11px] font-mono whitespace-nowrap">
                             {extracted.seniority.charAt(0).toUpperCase() + extracted.seniority.slice(1)}
                           </span>
                         )}
@@ -346,7 +418,9 @@ export default function Landing() {
                       </div>
                       <div>
                         <span className="text-xs text-[#869585] uppercase font-mono block mb-1">SALARY</span>
-                        <span className="text-sm text-white font-mono">{extracted.salary_text || 'Not mentioned'}</span>
+                        <span className="text-sm text-white font-mono">
+                          {extracted.salary_text || 'Not mentioned'}
+                        </span>
                       </div>
                     </div>
                     {extracted.required_skills.length > 0 && (
@@ -383,12 +457,16 @@ export default function Landing() {
                       <div className="h-6 bg-white/10 rounded w-16 animate-pulse" />
                       <div className="h-6 bg-white/10 rounded w-20 animate-pulse" />
                     </div>
-                    <p className="text-xs text-[#869585] text-center mt-4">Paste a JD and click Extract to see results</p>
+                    <p className="text-xs text-[#869585] text-center mt-4">
+                      Paste a JD and click Extract to see results
+                    </p>
                   </div>
                 )}
               </div>
             </div>
-            <p className="text-xs text-[#869585] mt-4">Sign up free to unlock full company intelligence reports with sources and citations.</p>
+            <p className="text-xs text-[#869585] mt-4">
+              Sign up free to unlock full company intelligence reports with sources and citations.
+            </p>
           </div>
         </section>
 
@@ -488,7 +566,7 @@ export default function Landing() {
                     <span className="text-base font-semibold text-white">{r.company}</span>
                     <StarRating rating={r.rating} />
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="px-2 py-0.5 rounded bg-white/5 text-[#bccbb9] text-[11px] font-mono">{r.role}</span>
                     <span className={`px-2 py-0.5 rounded text-[10px] font-mono uppercase ${r.badgeClass}`}>{r.badge}</span>
                   </div>
@@ -532,7 +610,10 @@ export default function Landing() {
                   placeholder="your@email.com"
                   className="bg-[#1c1b1b] border border-white/10 rounded-lg px-3 py-1.5 text-sm text-[#e5e2e1] placeholder:text-[#869585] focus:outline-none focus:border-[#22c55e] flex-1"
                 />
-                <button className="bg-[#22c55e] text-[#003915] px-3 py-1.5 text-xs font-semibold rounded-lg hover:bg-[#4be277] transition-colors">
+                <button
+                  type="button"
+                  className="bg-[#22c55e] text-[#003915] px-3 py-1.5 text-xs font-semibold rounded-lg hover:bg-[#4be277] transition-colors"
+                >
                   Subscribe
                 </button>
               </div>
