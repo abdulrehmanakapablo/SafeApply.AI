@@ -269,9 +269,6 @@ importers:
       '@types/node':
         specifier: ^26.6.1
         version: 26.6.1
-      '@types/pdf-parse':
-        specifier: ^1.1.5
-        version: 1.1.5
       ts-node-dev:
         specifier: ^2.0.0
         version: 2.0.0(@types/node@26.6.1)(typescript@5.9.3)
@@ -1320,9 +1317,6 @@ packages:
 
   '@types/node@26.6.1':
     resolution: {integrity: sha512-VqGJBMCtdhqkBUCcBLvywI0NJ+KLuVzgNnlBUNFOQjqVxzo2lxLUNg1DSey8+u2u6ktswSAxg+s68QLzWHNOuA==}
-
-  '@types/pdf-parse@1.1.5':
-    resolution: {integrity: sha512-kBfrSXsloMnUJOKi25s3+hRmkycHfLK6A09eRGqF/N8BkQoPUmaCr+q8Cli5FnfohEz/rsv82zAiPz/LXtOGhA==}
 
   '@types/qs@6.15.1':
     resolution: {integrity: sha512-GZHUBZR9hckSUhrxmp1nG6NwdpM9fCunJwyThLW1X3AyHgd9IlHb6VANpQQqDr2o/qQp6McZ3y/IA2rVzKzSbw==}
@@ -4179,10 +4173,6 @@ snapshots:
   '@types/node@26.6.1':
     dependencies:
       undici-types: 8.9.0
-
-  '@types/pdf-parse@1.1.5':
-    dependencies:
-      '@types/node': 26.6.1
 
   '@types/qs@6.15.1': {}
 
