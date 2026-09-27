@@ -1,0 +1,41 @@
+# ─── Dependencies ───────────────────────────────────────────
+node_modules/
+.pnpm-store/
+
+# ─── Build outputs ──────────────────────────────────────────
+dist/
+build/
+out/
+.next/
+*.tsbuildinfo
+.turbo/
+
+# ─── Environment (NEVER commit these) ───────────────────────
+.env
+.env.*
+!.env.example
+
+# ─── Logs ───────────────────────────────────────────────────
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ─── OS / Editor ────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+
+# ─── Testing / Coverage ─────────────────────────────────────
+coverage/
+.nyc_output/
+
+# ─── Misc ───────────────────────────────────────────────────
+*.pem
+.cache/
+node_modules
