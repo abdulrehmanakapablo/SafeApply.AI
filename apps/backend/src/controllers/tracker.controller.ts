@@ -8,11 +8,23 @@ import { supabaseAdmin } from '../config/supabase'
 import { sanitizeObject } from '../utils/sanitize'
 import { sendSuccess, sendError, sendPaginated } from '../utils/response'
 
+// ─── Helpers ──────────────────────────────────────────────
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function isValidUuid(value: unknown): value is string {
+  return typeof value === 'string' && UUID_RE.test(value)
+}
+
+const MAX_LIMIT = 100
+const DEFAULT_LIMIT = 20
+
 // ─── GET ALL APPLICATIONS ─────────────────────────────────
 export async function getApplications(req: Request, res: Response): Promise<void> {
   try {
-    const page = parseInt(req.query.page as string) || 1
-    const limit = 20
+    const page = Math.max(1, parseInt(req.query.page as string) || 1)
+    const requestedLimit = parseInt(req.query.limit as string) || DEFAULT_LIMIT
+    const limit = Math.min(Math.max(1, requestedLimit), MAX_LIMIT)
     const offset = (page - 1) * limit
     const status = req.query.status as string
     const search = req.query.search as string
@@ -62,6 +74,7 @@ export async function createApplication(req: Request, res: Response): Promise<vo
       .single()
 
     if (error) {
+      console.error('Create application DB error:', error)
       sendError(res, 'Failed to create application', 500)
       return
     }
@@ -83,6 +96,13 @@ export async function createApplication(req: Request, res: Response): Promise<vo
 export async function getApplication(req: Request, res: Response): Promise<void> {
   try {
     const { id } = req.params
+
+    // Reject malformed IDs before hitting the DB — saves a round-trip
+    // and gives a clearer error than a generic 404.
+    if (!isValidUuid(id)) {
+      sendError(res, 'Invalid application id', 400)
+      return
+    }
 
     const { data, error } = await supabaseAdmin
       .from('applications')
@@ -127,6 +147,11 @@ export async function updateApplication(req: Request, res: Response): Promise<vo
     const { id } = req.params
     const body = sanitizeObject(req.body)
 
+    if (!isValidUuid(id)) {
+      sendError(res, 'Invalid application id', 400)
+      return
+    }
+
     // First get current application to check status change
     const { data: current } = await supabaseAdmin
       .from('applications')
@@ -149,6 +174,7 @@ export async function updateApplication(req: Request, res: Response): Promise<vo
       .single()
 
     if (error) {
+      console.error('Update application DB error:', error)
       sendError(res, 'Failed to update application', 500)
       return
     }
@@ -173,6 +199,11 @@ export async function deleteApplication(req: Request, res: Response): Promise<vo
   try {
     const { id } = req.params
 
+    if (!isValidUuid(id)) {
+      sendError(res, 'Invalid application id', 400)
+      return
+    }
+
     const { error } = await supabaseAdmin
       .from('applications')
       .delete()
@@ -180,6 +211,7 @@ export async function deleteApplication(req: Request, res: Response): Promise<vo
       .eq('user_id', req.user!.userId)
 
     if (error) {
+      console.error('Delete application DB error:', error)
       sendError(res, 'Failed to delete application', 500)
       return
     }
@@ -196,6 +228,11 @@ export async function addCommunication(req: Request, res: Response): Promise<voi
   try {
     const { id } = req.params
     const { type, notes, date } = sanitizeObject(req.body)
+
+    if (!isValidUuid(id)) {
+      sendError(res, 'Invalid application id', 400)
+      return
+    }
 
     // Verify user owns this application
     const { data: app } = await supabaseAdmin
@@ -217,6 +254,7 @@ export async function addCommunication(req: Request, res: Response): Promise<voi
       .single()
 
     if (error) {
+      console.error('Add communication DB error:', error)
       sendError(res, 'Failed to add communication log', 500)
       return
     }

@@ -15,6 +15,14 @@ import { detectGhostPosting } from '../services/serpapi.service'
 import { fetchGlassdoorData } from '../services/glassdoor.service'
 import { extractJDData } from '../services/groq.service'
 
+// Derive result types from the actual service functions.
+// If a service changes its return shape, these update automatically.
+type ExtractJDResult = Awaited<ReturnType<typeof extractJDData>>
+type NewsResult = Awaited<ReturnType<typeof fetchCompanyNews>>
+type GitHubResult = Awaited<ReturnType<typeof fetchGitHubData>>
+type GhostPostingResult = Awaited<ReturnType<typeof detectGhostPosting>>
+type GlassdoorResult = Awaited<ReturnType<typeof fetchGlassdoorData>>
+
 interface ReportJob {
   companyName: string
   jobTitle?: string
@@ -22,11 +30,33 @@ interface ReportJob {
 }
 
 interface ReportResult {
-  extracted_jd: Record<string, unknown> | null
-  news: Record<string, unknown>
-  github: Record<string, unknown>
-  ghost_posting: Record<string, unknown>
-  glassdoor: Record<string, unknown> | null
+  extracted_jd: ExtractJDResult
+  news: NewsResult
+  github: GitHubResult
+  ghost_posting: GhostPostingResult
+  glassdoor: GlassdoorResult
+}
+
+// ─── Safe empty results ───────────────────────────────────
+// Used when a service call rejects. Each matches the full shape
+// of the corresponding service's success return value.
+
+const EMPTY_NEWS: NewsResult = {
+  articles: [],
+  source_url: '',
+}
+
+const EMPTY_GITHUB: GitHubResult = {
+  org_found: false,
+  public_repos: 0,
+  languages: [],
+  last_commit: null,
+  source_url: '',
+}
+
+const EMPTY_GHOST_POSTING: GhostPostingResult = {
+  postings: [],
+  source_url: '',
 }
 
 // Process a company report — runs all API calls in parallel
@@ -47,26 +77,21 @@ export async function processReport(job: ReportJob): Promise<ReportResult> {
     fetchGitHubData(companyName),
     jobTitle
       ? detectGhostPosting(companyName, jobTitle)
-      : Promise.resolve({ postings: [], source_url: '' }),
+      : Promise.resolve(EMPTY_GHOST_POSTING),
     fetchGlassdoorData(companyName),
   ])
 
-  // Extract values from settled promises — null if any failed
+  // Extract values from settled promises — safe fallback if any failed
   return {
     extracted_jd:
       extractedJD.status === 'fulfilled' ? extractedJD.value : null,
-    news:
-      newsResult.status === 'fulfilled'
-        ? newsResult.value
-        : { articles: [], source_url: '' },
+    news: newsResult.status === 'fulfilled' ? newsResult.value : EMPTY_NEWS,
     github:
-      githubResult.status === 'fulfilled'
-        ? githubResult.value
-        : { org_found: false, languages: [] },
+      githubResult.status === 'fulfilled' ? githubResult.value : EMPTY_GITHUB,
     ghost_posting:
       ghostPostingResult.status === 'fulfilled'
         ? ghostPostingResult.value
-        : { postings: [], source_url: '' },
+        : EMPTY_GHOST_POSTING,
     glassdoor:
       glassdoorResult.status === 'fulfilled' ? glassdoorResult.value : null,
   }

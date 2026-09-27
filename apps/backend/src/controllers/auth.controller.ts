@@ -21,11 +21,16 @@ export async function signup(req: Request, res: Response): Promise<void> {
   try {
     const { full_name, email, password, phone } = sanitizeObject(req.body)
 
+    const normalizedEmail = (email as string).toLowerCase()
+    const normalizedName = (full_name as string).trim()
+    const normalizedPhone =
+      phone && typeof phone === 'string' ? phone : null
+
     // Reject if email already taken
     const { data: existingUser } = await supabaseAdmin
       .from('users')
       .select('id')
-      .eq('email', (email as string).toLowerCase())
+      .eq('email', normalizedEmail)
       .single()
 
     if (existingUser) {
@@ -33,12 +38,19 @@ export async function signup(req: Request, res: Response): Promise<void> {
       return
     }
 
-    // Create user in Supabase Auth — email_confirm true skips verification
+    // Create user in Supabase Auth.
+    // - email_confirm: true skips the verification email for the pilot.
+    // - user_metadata is read by the on_auth_user_created trigger, which
+    //   creates the matching public.users row automatically.
     const { data: authData, error: authError } =
       await supabaseAdmin.auth.admin.createUser({
-        email: (email as string).toLowerCase(),
+        email: normalizedEmail,
         password,
         email_confirm: true,
+        user_metadata: {
+          full_name: normalizedName,
+          phone: normalizedPhone,
+        },
       })
 
     if (authError || !authData.user) {
@@ -47,24 +59,31 @@ export async function signup(req: Request, res: Response): Promise<void> {
       return
     }
 
-    // Hash password for our users table (defense in depth)
+    // Hash password for our own users row (defense in depth — Supabase also
+    // stores its own hash, but we keep one in case we ever migrate auth).
     const passwordHash = await hashPassword(password)
 
-    // Insert user profile row
-    const { error: insertError } = await supabaseAdmin.from('users').insert({
-      id: authData.user.id,
-      email: (email as string).toLowerCase(),
-      full_name: (full_name as string).trim(),
-      phone: phone && typeof phone === 'string' ? phone : null,
-      password_hash: passwordHash,
-      role: 'user',
-      plan: 'free',
-      email_verified: true,
-    })
+    // Upsert — the trigger has almost certainly already created the row.
+    // - If the row exists: fill in password_hash and anything the trigger
+    //   couldn't populate. Do NOT touch role/plan here — the trigger owns
+    //   those and decides first-admin promotion.
+    // - If the trigger somehow didn't run: this inserts the full row.
+    const { error: upsertError } = await supabaseAdmin
+      .from('users')
+      .upsert(
+        {
+          id: authData.user.id,
+          email: normalizedEmail,
+          full_name: normalizedName,
+          phone: normalizedPhone,
+          password_hash: passwordHash,
+        },
+        { onConflict: 'id' },
+      )
 
-    if (insertError) {
-      // Roll back — delete the auth user if profile insert fails
-      console.error('Users insert error:', insertError)
+    if (upsertError) {
+      // Roll back — delete the auth user so the account isn't half-created
+      console.error('Users upsert error:', upsertError)
       await supabaseAdmin.auth.admin.deleteUser(authData.user.id)
       sendError(res, 'Failed to create account', 500)
       return
@@ -245,7 +264,6 @@ export async function logout(req: Request, res: Response): Promise<void> {
 }
 
 // ─── FORGOT PASSWORD ──────────────────────────────────────
-// ─── FORGOT PASSWORD ──────────────────────────────────────
 export async function forgotPassword(req: Request, res: Response): Promise<void> {
   try {
     const { email } = req.body
@@ -281,7 +299,6 @@ export async function forgotPassword(req: Request, res: Response): Promise<void>
   }
 }
 
-// ─── RESET PASSWORD ───────────────────────────────────────
 // ─── RESET PASSWORD ───────────────────────────────────────
 export async function resetPassword(req: Request, res: Response): Promise<void> {
   try {
