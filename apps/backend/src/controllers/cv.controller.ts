@@ -17,10 +17,23 @@ export async function uploadCV(req: Request, res: Response): Promise<void> {
       return
     }
 
-    // Parse the uploaded file to extract text
-    const parsed = await parseCV(req.file.buffer, req.file.mimetype)
+    // parseCV returns a plain string — NOT an object.
+    // (Previously this was destructured as parsed.text / parsed.wordCount,
+    //  which silently returned undefined in the response.)
+    const text = await parseCV(req.file.buffer, req.file.mimetype)
 
-    // Store file in Supabase Storage
+    if (!text || text.trim().length === 0) {
+      sendError(
+        res,
+        'No readable text found in this file. If it is a scanned PDF, try exporting a text-based version or paste the text manually.',
+        400,
+      )
+      return
+    }
+
+    // Store the original file in Supabase Storage (best-effort — a
+    // storage failure shouldn't block the parsed text from reaching
+    // the frontend).
     const fileName = `${req.user!.userId}/${Date.now()}_${req.file.originalname}`
     const { error: storageError } = await supabaseAdmin.storage
       .from('cv-uploads')
@@ -33,22 +46,29 @@ export async function uploadCV(req: Request, res: Response): Promise<void> {
       console.error('Storage upload error:', storageError)
     }
 
-    // Save CV text to profile if requested
+    // Optionally save the extracted text to the user profile
     if (req.body.save_cv === 'true' || req.body.save_cv === true) {
       await supabaseAdmin
         .from('users')
-        .update({ cv_text: parsed.text })
+        .update({ cv_text: text })
         .eq('id', req.user!.userId)
     }
 
+    const wordCount = text.split(/\s+/).filter(Boolean).length
+
     sendSuccess(res, {
-      text: parsed.text,
-      word_count: parsed.wordCount,
+      text,
+      word_count: wordCount,
+      char_count: text.length,
       file_name: req.file.originalname,
     })
   } catch (error) {
     console.error('Upload CV error:', error)
-    sendError(res, error instanceof Error ? error.message : 'Failed to process CV', 400)
+    sendError(
+      res,
+      error instanceof Error ? error.message : 'Failed to process CV',
+      400,
+    )
   }
 }
 
@@ -57,7 +77,6 @@ export async function matchCV(req: Request, res: Response): Promise<void> {
   try {
     const { cv_text, jd_text, save_cv } = req.body
 
-    // Save CV to profile if requested
     if (save_cv) {
       await supabaseAdmin
         .from('users')
@@ -65,7 +84,6 @@ export async function matchCV(req: Request, res: Response): Promise<void> {
         .eq('id', req.user!.userId)
     }
 
-    // Run AI match analysis
     const matchResult = await matchCVtoJD(cv_text, jd_text)
 
     if (!matchResult) {
@@ -73,11 +91,16 @@ export async function matchCV(req: Request, res: Response): Promise<void> {
       return
     }
 
-    // Log the match for analytics
-    await supabaseAdmin.from('cv_matches').insert({
-      user_id: req.user!.userId,
-      match_score: matchResult.match_percentage || 0,
-    }).then(() => {}).catch(() => {}) // Silent fail — not critical
+    // Log the match for analytics — non-critical, so any failure here
+    // is swallowed and only warned to the server log.
+    try {
+      await supabaseAdmin.from('cv_matches').insert({
+        user_id: req.user!.userId,
+        match_score: (matchResult.match_percentage as number) || 0,
+      })
+    } catch (logError) {
+      console.warn('Failed to log cv_match:', logError)
+    }
 
     sendSuccess(res, matchResult)
   } catch (error) {

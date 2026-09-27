@@ -1,62 +1,86 @@
 // ============================================================
 // FILE: apps/backend/src/services/pdf.service.ts
-// PURPOSE: Parses uploaded PDF and DOCX files to extract text
-// Used in CV upload flow to get raw text from CV files
-// pdf-parse for PDFs, mammoth for DOCX files
+// PURPOSE: Extract text from PDF and DOCX files
+// Uses pdf-parse@2.x (class-based API) + mammoth
 // ============================================================
 
+import { PDFParse } from 'pdf-parse'
 import mammoth from 'mammoth'
 
-interface ParseResult {
-  text: string
-  wordCount: number
-}
+// ─── PDF PARSING ──────────────────────────────────────────
+export async function parsePDF(buffer: Buffer): Promise<string> {
+  let parser: PDFParse | null = null
 
-// Parse PDF buffer to plain text
-export async function parsePDF(buffer: Buffer): Promise<ParseResult> {
   try {
-    // Dynamic import to avoid issues with pdf-parse module loading
-    const pdfParse = await import('pdf-parse')
-    const data = await pdfParse.default(buffer)
-    const text = data.text.trim()
-    const wordCount = text.split(/\s+/).filter(Boolean).length
+    parser = new PDFParse({ data: buffer })
 
-    return { text, wordCount }
+    // Explicitly request all pages — passing no params in some
+    // pdfjs wrappers silently returns an empty result.
+    const result = await parser.getText({})
+
+    // Log the raw shape so we can see what's happening
+    console.log('[pdf.service] parse result:', {
+      totalPages: result?.total,
+      textLength: result?.text?.length ?? 0,
+      firstPageLength: result?.pages?.[0]?.text?.length ?? 0,
+      sample: result?.text?.slice(0, 200) ?? '(empty)',
+    })
+
+    const text = result?.text?.trim() ?? ''
+
+    if (!text) {
+      console.warn(
+        '[pdf.service] PDF parsed successfully but returned no text. ' +
+          'This usually means the PDF is image-based (scanned) and needs OCR.',
+      )
+    }
+
+    return text
   } catch (error) {
     console.error('PDF parse error:', error)
     throw new Error('Failed to parse PDF file')
+  } finally {
+    if (parser) {
+      try {
+        await parser.destroy()
+      } catch (destroyError) {
+        console.warn('PDF parser destroy warning:', destroyError)
+      }
+    }
   }
 }
 
-// Parse DOCX buffer to plain text
-export async function parseDOCX(buffer: Buffer): Promise<ParseResult> {
+// ─── DOCX PARSING ─────────────────────────────────────────
+export async function parseDOCX(buffer: Buffer): Promise<string> {
   try {
     const result = await mammoth.extractRawText({ buffer })
-    const text = result.value.trim()
-    const wordCount = text.split(/\s+/).filter(Boolean).length
+    const text = result.value?.trim() || ''
 
-    return { text, wordCount }
+    if (!text) {
+      console.warn('[pdf.service] DOCX parsed successfully but returned no text.')
+    }
+
+    return text
   } catch (error) {
     console.error('DOCX parse error:', error)
     throw new Error('Failed to parse DOCX file')
   }
 }
 
-// Auto detect file type and parse accordingly
+// ─── UNIFIED ──────────────────────────────────────────────
 export async function parseCV(
   buffer: Buffer,
-  mimetype: string
-): Promise<ParseResult> {
+  mimetype: string,
+): Promise<string> {
   if (mimetype === 'application/pdf') {
     return parsePDF(buffer)
   }
-
   if (
     mimetype ===
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    mimetype === 'application/msword'
   ) {
     return parseDOCX(buffer)
   }
-
-  throw new Error('Unsupported file type. Please upload PDF or DOCX.')
+  throw new Error(`Unsupported file type: ${mimetype}`)
 }
