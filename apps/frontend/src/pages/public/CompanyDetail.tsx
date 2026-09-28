@@ -8,6 +8,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import SEO from '../../components/SEO'
 import Logo from '../../components/ui/Logo'
+import { useAuthStore } from '../../store/authStore'
 import {
   getCompany,
   getCompanyReviews,
@@ -252,6 +253,7 @@ function StarDisplay({ rating, size = 16 }: { rating: number; size?: number }) {
 // ─── Component ────────────────────────────────────────────
 export default function CompanyDetail() {
   const { slug } = useParams<{ slug: string }>()
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
   const [header, setHeader] = useState<CompanyHeader | null>(null)
   const [reviews, setReviews] = useState<ReviewCard[]>([])
   const [loading, setLoading] = useState(true)
@@ -457,6 +459,17 @@ export default function CompanyDetail() {
     },
   }
 
+  // Review CTA — send logged-out visitors through signup first, then
+  // return them straight to the review form with this company pre-filled.
+  const reviewTargetPath = `/dashboard/review?company=${encodeURIComponent(
+    header.slug,
+  )}`
+  const reviewHref = isAuthenticated
+    ? reviewTargetPath
+    : `/signup?redirect=${encodeURIComponent(reviewTargetPath)}`
+  const reviewLabel = isAuthenticated ? 'Submit a Review' : 'Sign up to Review'
+  const reviewIcon = isAuthenticated ? 'rate_review' : 'person_add'
+
   return (
     <>
       <SEO
@@ -550,11 +563,11 @@ export default function CompanyDetail() {
                 </div>
 
                 <Link
-                  to="/dashboard/review"
+                  to={reviewHref}
                   className="inline-flex items-center justify-center gap-2 text-sm bg-[#22c55e] hover:bg-[#16A34A] text-black font-bold px-6 py-3 rounded-xl transition-all active:scale-[0.99] whitespace-nowrap"
                 >
-                  <span className="material-symbols-outlined text-[18px]">rate_review</span>
-                  Submit a Review
+                  <span className="material-symbols-outlined text-[18px]">{reviewIcon}</span>
+                  {reviewLabel}
                 </Link>
               </div>
 

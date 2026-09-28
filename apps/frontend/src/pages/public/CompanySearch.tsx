@@ -4,6 +4,7 @@
 // PURPOSE: Browse companies with reviews, ratings, and filters
 
 import { useState, useEffect, useMemo } from 'react'
+import { useAuthStore } from '../../store/authStore'
 import { Link } from 'react-router-dom'
 import SEO from '../../components/SEO'
 import Logo from '../../components/ui/Logo'
@@ -78,7 +79,7 @@ function StarRow({ rating }: { rating: number }) {
         <span
           key={i}
           className="material-symbols-outlined text-[18px]"
-          style={{ fontVariationSettings: i <= Math.round(rating) ? "'FILL' 1" : "'FILL' 0" }}
+          style={{ fontVariationSets: undefined, fontVariationSettings: i <= Math.round(rating) ? "'FILL' 1" : "'FILL' 0" }}
         >
           star
         </span>
@@ -95,6 +96,23 @@ export default function CompanySearch() {
   const [minRating, setMinRating] = useState(0)
   const [showIndustryMenu, setShowIndustryMenu] = useState(false)
   const [showRatingMenu, setShowRatingMenu] = useState(false)
+
+  // ── Auth state ────────────────────────────────────────
+  // Reads from the Zustand store, then verifies a real token exists.
+  // The store flag alone can be stale; the token is the source of truth.
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
+  const user = useAuthStore((s) => s.user)
+  const hasToken =
+    typeof window !== 'undefined' && Boolean(localStorage.getItem('access_token'))
+  const canReview = isAuthenticated && hasToken
+
+  // Route for the review CTA — signup first if not logged in, then
+  // bounce back to the review form after they finish signing up.
+  const reviewHref = canReview
+    ? '/dashboard/review'
+    : '/signup?redirect=%2Fdashboard%2Freview'
+  const reviewLabel = canReview ? 'Add Company Review' : 'Sign up to Review'
+  const reviewIcon = canReview ? 'rate_review' : 'person_add'
 
   // Fetch from backend — silently fall back to demo on empty or error
   useEffect(() => {
@@ -177,12 +195,40 @@ export default function CompanySearch() {
               <Link to="/about" className="text-sm text-[#869585] hover:text-[#e5e2e1] transition-colors">About</Link>
             </nav>
             <div className="flex items-center gap-3">
-              <Link to="/login" className="px-4 py-1.5 text-sm font-medium text-[#e5e2e1] bg-[#1c1b1b] border border-white/10 rounded-lg hover:border-white/20 transition-colors">
-                Login
-              </Link>
-              <Link to="/signup" className="px-4 py-1.5 text-sm font-semibold bg-[#22c55e] text-[#003915] rounded-lg hover:bg-[#4be277] transition-colors">
-                Sign Up
-              </Link>
+              {canReview ? (
+                <>
+                  <Link
+                    to="/dashboard"
+                    className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-[#e5e2e1] bg-[#1c1b1b] border border-white/10 rounded-lg hover:border-white/20 transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-[16px] text-[#22c55e]">
+                      dashboard
+                    </span>
+                    Dashboard
+                  </Link>
+                  <Link
+                    to="/dashboard/settings"
+                    className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-[#e5e2e1] bg-[#1c1b1b] border border-white/10 rounded-lg hover:border-white/20 transition-colors"
+                    title={user?.email ?? ''}
+                  >
+                    <span className="w-6 h-6 rounded-full bg-[#22c55e] text-black text-[11px] font-bold flex items-center justify-center">
+                      {(user?.full_name?.[0] || user?.email?.[0] || 'U').toUpperCase()}
+                    </span>
+                    <span className="hidden sm:inline truncate max-w-[100px]">
+                      {user?.full_name?.split(' ')[0] || 'Account'}
+                    </span>
+                  </Link>
+                </>
+              ) : (
+                <>
+                  <Link to="/login" className="px-4 py-1.5 text-sm font-medium text-[#e5e2e1] bg-[#1c1b1b] border border-white/10 rounded-lg hover:border-white/20 transition-colors">
+                    Login
+                  </Link>
+                  <Link to="/signup" className="px-4 py-1.5 text-sm font-semibold bg-[#22c55e] text-[#003915] rounded-lg hover:bg-[#4be277] transition-colors">
+                    Sign Up
+                  </Link>
+                </>
+              )}
             </div>
           </div>
         </header>
@@ -420,25 +466,27 @@ export default function CompanySearch() {
               </div>
             )}
 
-            {/* CTA BANNER */}
+            {/* CTA BANNER — auth-aware */}
             <div className="mt-12 bg-[#0D0D0D] border border-white/10 rounded-xl p-6 flex flex-col md:flex-row items-center justify-between gap-6">
               <div className="flex items-center gap-4">
                 <div className="w-12 h-12 rounded-lg bg-[#1c1b1b] border border-white/10 flex items-center justify-center text-[#22c55e]">
                   <span className="material-symbols-outlined text-2xl">insights</span>
                 </div>
                 <div>
-                  <h4 className="text-base font-semibold text-white">Are you currently interviewing?</h4>
+                  <h4 className="text-base font-semibold text-white">
+                    Are you currently interviewing?
+                  </h4>
                   <p className="text-sm text-[#869585]">
                     Submit an anonymous interview breakdown to unlock raw un-redacted compensation telemetry.
                   </p>
                 </div>
               </div>
               <Link
-                to="/dashboard/review"
+                to={reviewHref}
                 className="bg-[#22c55e] hover:bg-[#16A34A] text-black text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors inline-flex items-center gap-2 whitespace-nowrap"
               >
-                <span className="material-symbols-outlined text-base">rate_review</span>
-                Add Company Review
+                <span className="material-symbols-outlined text-base">{reviewIcon}</span>
+                {reviewLabel}
               </Link>
             </div>
 

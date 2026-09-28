@@ -1,6 +1,11 @@
 // FILE: src/store/authStore.ts
 // PURPOSE: Global auth state — user object, access token, actions.
 // Persists to localStorage so users stay logged in across reloads.
+//
+// NOTE: The persist key is 'safeapply-auth'. That's the key Zustand
+// writes to localStorage. When logging out, we don't need to remove it
+// manually — persist automatically rewrites it with the new (empty)
+// state after set() runs.
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
@@ -47,7 +52,10 @@ export const useAuthStore = create<AuthState>()(
       },
 
       logout: () => {
+        // Clear the raw token
         localStorage.removeItem('access_token')
+        // Reset store state. persist will rewrite 'safeapply-auth' with
+        // this empty state automatically — no manual removeItem needed.
         set({ user: null, token: null, isAuthenticated: false })
       },
 
@@ -55,7 +63,7 @@ export const useAuthStore = create<AuthState>()(
 
       setToken: (token) => {
         localStorage.setItem('access_token', token)
-        set({ token })
+        set({ token, isAuthenticated: true })
       },
     }),
     {
@@ -63,6 +71,9 @@ export const useAuthStore = create<AuthState>()(
       partialize: (state) => ({
         user: state.user,
         isAuthenticated: state.isAuthenticated,
+        // Note: token is intentionally NOT persisted. The real token
+        // lives in localStorage as 'access_token' — the store's `token`
+        // field is just a mirror for components that want it in memory.
       }),
     }
   )

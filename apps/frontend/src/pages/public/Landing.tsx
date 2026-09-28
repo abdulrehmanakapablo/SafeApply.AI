@@ -1,4 +1,13 @@
 // FILE: src/pages/public/Landing.tsx
+//
+// Live demo behaviour (permanent):
+//   • Backend caps input at 8,000 chars — enforced here too
+//   • Live character counter turns yellow at 6,000, red at 8,000
+//   • Button disables when over the cap
+//   • In production, backend enforces 1 try per IP per 24h
+//   • Frontend tracks usage in localStorage as a UX shortcut
+//   • In dev, the backend bypasses the IP limit so testing is free;
+//     clear localStorage to reset the frontend flag
 
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
@@ -109,9 +118,15 @@ function StarRating({ rating }: { rating: number }) {
 const DEFAULT_JD =
   'We are seeking a Staff Infrastructure Engineer to design our Kubernetes orchestration fleet. Requirements: Go, Rust, eBPF, Distributed Consensus (Raft), AWS, Prometheus. Nice to have: Terraform, Linux Kernel tuning. Base salary range: $195k - $240k. Location: San Francisco, CA (Hybrid).'
 
-// localStorage flag — a UX shortcut so the button says "Sign up" on the
-// second visit without waiting on the API. The real limit is enforced
-// server-side per IP, so clearing this doesn't grant extra tries.
+// Matches the backend cap. Kept in sync manually — update both
+// together if you change one.
+const DEMO_MAX_CHARS = 8000
+const DEMO_WARN_CHARS = 6000
+
+// localStorage key — tracks that this visitor already used their free
+// try. The backend enforces the real IP limit in production; this is a
+// UX shortcut so the button flips to "Sign up" on the second visit
+// without needing a network round-trip.
 const DEMO_USED_KEY = 'safeapply_demo_jd_used'
 
 export default function Landing() {
@@ -126,10 +141,23 @@ export default function Landing() {
     return localStorage.getItem(DEMO_USED_KEY) === '1'
   })
 
-  async function handleExtract() {
-    if (!jdText.trim() || loading) return
+  const charCount = jdText.length
+  const overLimit = charCount > DEMO_MAX_CHARS
+  const nearLimit = charCount > DEMO_WARN_CHARS && !overLimit
+  const tooShort = jdText.trim().length < 50
 
-    // Second click → straight to signup, no API call, no wasted tokens
+  const counterClass = overLimit
+    ? 'text-[#EF4444]'
+    : nearLimit
+    ? 'text-[#EAB308]'
+    : 'text-[#869585]'
+
+  const canSubmit = !loading && !demoUsed && !overLimit && !tooShort
+
+  async function handleExtract() {
+    if (!canSubmit) return
+
+    // Second click → straight to signup, no wasted API call
     if (demoUsed) {
       navigate('/signup?reason=demo_used')
       return
@@ -145,10 +173,10 @@ export default function Landing() {
         body: JSON.stringify({ jd_text: jdText }),
       })
 
-      const data = await res.json()
+      const data = await res.json().catch(() => null)
 
       // Backend IP rate-limit hit — visitor cleared localStorage but
-      // their IP is still blocked. Push them to signup.
+      // their IP is still blocked (production only).
       if (res.status === 429 || data?.code === 'DEMO_EXHAUSTED') {
         localStorage.setItem(DEMO_USED_KEY, '1')
         setDemoUsed(true)
@@ -323,11 +351,17 @@ export default function Landing() {
               <div className="bg-[#0e0e0e] border border-white/10 rounded-lg p-4 flex flex-col gap-3">
                 <div className="flex items-center justify-between pb-2 border-b border-white/10">
                   <span className="text-xs text-[#869585] uppercase font-mono">INPUT JD</span>
-                  <span className="text-xs text-[#22c55e] flex items-center gap-1 font-mono">
-                    <span className="w-2 h-2 rounded-full bg-[#22c55e] animate-ping" />
-                    READY
+                  <span className="flex items-center gap-3 font-mono text-xs">
+                    <span className={counterClass}>
+                      {charCount.toLocaleString()} / {DEMO_MAX_CHARS.toLocaleString()}
+                    </span>
+                    <span className="text-[#22c55e] flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-[#22c55e] animate-ping" />
+                      READY
+                    </span>
                   </span>
                 </div>
+
                 <textarea
                   aria-label="Job description to extract data from"
                   className="w-full bg-[#1c1b1b] border border-white/10 rounded p-3 text-sm text-[#e5e2e1] placeholder:text-[#869585] focus:border-[#22c55e] focus:outline-none transition-colors resize-none font-mono"
@@ -360,13 +394,23 @@ export default function Landing() {
                   <button
                     type="button"
                     onClick={handleExtract}
-                    disabled={loading || !jdText.trim()}
+                    disabled={!canSubmit}
                     className="w-full py-3 bg-[#22c55e] hover:bg-[#4be277] text-[#003915] text-sm font-semibold rounded transition-colors flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     {loading ? (
                       <>
                         <span className="material-symbols-outlined text-[18px] animate-spin">sync</span>
                         <span>Extracting...</span>
+                      </>
+                    ) : overLimit ? (
+                      <>
+                        <span className="material-symbols-outlined text-[18px]">block</span>
+                        <span>Too long — shorten to 8,000 chars</span>
+                      </>
+                    ) : tooShort ? (
+                      <>
+                        <span className="material-symbols-outlined text-[18px]">info</span>
+                        <span>Paste at least 50 characters</span>
                       </>
                     ) : (
                       <>

@@ -1,37 +1,36 @@
 // FILE: src/components/shared/AdminRoute.tsx
-// PURPOSE: Redirects to /dashboard if user is not admin
-// DEV MODE: bypasses the role check so you can preview admin pages.
-//           Disabled in production builds.
+// PURPOSE: Redirects non-admins away from /admin/*.
+// Also redirects unauthenticated users to /login.
+//
+// NOTE: The old dev-mode auto-login was removed here. It fired whenever
+// this component mounted and silently logged the visitor in as a fake
+// admin ('Dev Operator'), which then persisted to localStorage via
+// Zustand and made the entire app think the user was authenticated on
+// every subsequent page load. That's why logged-out users could reach
+// /dashboard/review and why every API call sent an invalid 'dev-token'.
 
-import { ReactNode, useEffect } from 'react'
-import { Navigate } from 'react-router-dom'
+import { ReactNode } from 'react'
+import { Navigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
 
-const DEV_MOCK_USER = {
-  id: 'dev-user-0001',
-  email: 'dev@safeapply.ai',
-  full_name: 'Dev Operator',
-  role: 'admin',
-  plan: 'pro',
-}
-
 export default function AdminRoute({ children }: { children: ReactNode }) {
-  const user = useAuthStore((s) => s.user)
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
-  const login = useAuthStore((s) => s.login)
+  const user = useAuthStore((s) => s.user)
+  const location = useLocation()
 
-  useEffect(() => {
-    if (import.meta.env.DEV && !isAuthenticated) {
-      login(DEV_MOCK_USER, 'dev-token')
-    }
-  }, [isAuthenticated, login])
+  // Must have BOTH the flag and a real token — the Zustand flag alone can
+  // be stale (from an old session, or set by old dev-bypass code).
+  const hasToken =
+    typeof window !== 'undefined' && Boolean(localStorage.getItem('access_token'))
 
-  if (import.meta.env.DEV) {
-    return <>{children}</>
-  }
-
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />
+  if (!isAuthenticated || !hasToken) {
+    return (
+      <Navigate
+        to="/login"
+        replace
+        state={{ from: location.pathname + location.search }}
+      />
+    )
   }
 
   if (user?.role !== 'admin') {
