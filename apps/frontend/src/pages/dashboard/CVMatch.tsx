@@ -29,48 +29,14 @@ const JD_MAX_CHARS = 10000
 
 // ─── Demo fallback (pilot mode — backend may return empty) ─
 const DEMO_RESULT: CVMatchResult = {
-  match_percentage: 84,
-  matched_skills: [
-    'Python',
-    'React',
-    'PostgreSQL',
-    'Docker',
-    'REST APIs',
-    'Microservices',
-    'CI/CD',
-  ],
-  missing_skills: ['GraphQL', 'AWS Lambda'],
-  probably_have: ['System Design', 'Unit Testing'],
-  keyword_mismatches: [
-    { jd_term: 'TypeScript', cv_term: 'TS' },
-    { jd_term: 'Amazon Web Services', cv_term: 'AWS' },
-    {
-      jd_term: 'Continuous Integration / Continuous Deployment',
-      cv_term: 'CI/CD',
-    },
-  ],
-  seniority_gaps: [
-    'Led a 6-person team — reword to emphasize architectural ownership.',
-  ],
-  ats_warnings: [
-    'Multi-column layout detected — may break legacy parsers.',
-    'Complex table in experience section scrambles chronological order.',
-    'Non-standard header tag — header level skips standard h1/h2 semantic order.',
-  ],
-  bullet_rewrites: [
-    {
-      original:
-        'Worked on backend microservices with Python and Postgres to handle user traffic and fix API latency issues.',
-      suggested:
-        'Architected Python & PostgreSQL microservices processing 4.2M daily requests; optimized distributed queries reducing REST API latency by 38%.',
-    },
-    {
-      original:
-        'Helped team set up Docker containers and CI/CD pipelines to deploy web applications faster.',
-      suggested:
-        'Containerized distributed components using Docker and engineered CI/CD pipelines, accelerating continuous deployment cycles by 65%.',
-    },
-  ],
+  match_percentage: 0,
+  matched_skills: [],
+  missing_skills: [],
+  probably_have: [],
+  keyword_mismatches: [],
+  seniority_gaps: [],
+  ats_warnings: [],
+  bullet_rewrites: [],
 }
 
 // ─── Helper: validate a File before upload ───────────────
@@ -99,15 +65,7 @@ function scoreColor(pct: number): string {
 // ─── Component ───────────────────────────────────────────
 export default function CVMatch() {
   const [cvText, setCvText] = useState('')
-  const [jdText, setJdText] = useState(
-    `Senior Distributed Systems Engineer - Enterprise Cloud Operations
-
-Requirements:
-- 5+ years building microservices using TypeScript, Node.js, and Python.
-- Proven experience with Amazon Web Services (AWS Lambda, S3, ECS), PostgreSQL, and Docker.
-- Strong architectural grasp of GraphQL schema design, CI/CD orchestration, and high-scale REST APIs.
-- Background in System Design, Unit Testing, and multi-tenant security guarantees.`
-  )
+  const [jdText, setJdText] = useState('')
   const [saveToProfile, setSaveToProfile] = useState(true)
   const [uploadedFileName, setUploadedFileName] = useState('')
   const [uploading, setUploading] = useState(false)
@@ -222,7 +180,7 @@ Requirements:
       }
     } catch {
       // Network/401 — silent fallback to demo (pilot mode)
-      setToast({ kind: 'err', text: 'Analysis unavailable — showing demo.' })
+      setToast({ kind: 'err', text: 'Analysis unavailable — try again.' })
     } finally {
       setRunning(false)
     }

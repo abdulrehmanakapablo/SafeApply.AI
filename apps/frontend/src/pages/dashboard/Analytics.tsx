@@ -57,51 +57,17 @@ interface AnalyticsView {
 
 // ── Demo fallback (pilot mode — DB empty) ──────────────────
 const DEMO: AnalyticsView = {
-  total_submissions: 48,
-  response_velocity: 37.5,
-  avg_ats_match: 91.4,
-  interview_conversion: 18.8,
-  line_max: 20,
-  peak_line_index: 4,
-  line_points: [
-    { label: 'Oct 01', value: 2, cx: 40, cy: 185 },
-    { label: 'Oct 08', value: 6, cx: 130, cy: 145 },
-    { label: 'Oct 15', value: 9, cx: 225, cy: 120 },
-    { label: 'Oct 22', value: 13, cx: 320, cy: 80 },
-    { label: 'Oct 29', value: 17, cx: 415, cy: 50 },
-    { label: 'Nov 05', value: 20, cx: 510, cy: 35 },
-  ],
-  response_by_day: [
-    { day: 'Mon', rate: 42 },
-    { day: 'Tue', rate: 68 },
-    { day: 'Wed', rate: 51 },
-    { day: 'Thu', rate: 39 },
-    { day: 'Fri', rate: 18 },
-    { day: 'Sat', rate: 4 },
-    { day: 'Sun', rate: 8 },
-  ],
-  status_breakdown: [
-    { status: 'Applied', count: 16, color: '#22C55E' },
-    { status: 'Interviewing', count: 9, color: '#EAB308' },
-    { status: 'Screening', count: 8, color: '#CA8A04' },
-    { status: 'Rejected', count: 7, color: '#EF4444' },
-    { status: 'Ghosted', count: 4, color: '#737373' },
-    { status: 'Offered', count: 2, color: '#16A34A' },
-    { status: 'Saved', count: 2, color: '#353534' },
-  ],
-  weekly_volume: [
-    { week: 'W40', lead: 4, senior: 2 },
-    { week: 'W41', lead: 5, senior: 3 },
-    { week: 'W42', lead: 6, senior: 4 },
-    { week: 'W43', lead: 8, senior: 4 },
-    { week: 'W44', lead: 9, senior: 3 },
-  ],
-  insights: [
-    'Tuesday morning submissions (08:00 – 10:30 PST) show a 68% first-round callback rate, 2.3× higher than Friday submissions.',
-    'Applications optimized with CV Intelligence (>90% ATS match score) yielded a 4.1-day faster response latency from automated Greenhouse/Workday filters.',
-    'Roles matching your "Distributed Systems + Go" stack show zero ghosting signals, compared to a 22% stall rate on broader "Full-Stack" postings.',
-    'Identified 3 companies in your tracker (Linear, Anthropic, Datadog) with recent Series funding and high engineering headcount growth — prioritizing follow-ups is recommended.',
-  ],
+  total_submissions: 0,
+  response_velocity: 0,
+  avg_ats_match: 0,
+  interview_conversion: 0,
+  line_max: 0,
+  peak_line_index: -1,
+  line_points: [],
+  response_by_day: [],
+  status_breakdown: [],
+  weekly_volume: [],
+  insights: [],
 }
 
 // Map backend response → view model, with sane defaults

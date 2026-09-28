@@ -22,47 +22,7 @@ interface RevenueMetric {
   footerRightAccent?: boolean
 }
 
-const METRICS: RevenueMetric[] = [
-  {
-    label: 'Monthly Recurring Revenue',
-    icon: 'trending_up',
-    value: '$128,450',
-    delta: '+14.2% MoM',
-    deltaLabel: 'vs $112,250 prev',
-    footerLeft: 'Net expansion',
-    footerRight: '+$16,200',
-    footerRightAccent: true,
-  },
-  {
-    label: 'Lifetime Sales Count',
-    icon: 'receipt_long',
-    value: '8,942',
-    suffix: 'Tx',
-    delta: '+612 this month',
-    deltaLabel: '7.3% velocity',
-    footerLeft: 'Avg order value',
-    footerRight: '$249.00',
-  },
-  {
-    label: 'Total ARR Run-Rate',
-    icon: 'currency_exchange',
-    value: '$1,541,400',
-    delta: '+24.8% YoY',
-    deltaLabel: 'baseline $1.23M',
-    footerLeft: 'Settlement engine',
-    footerRight: 'Stripe Connect',
-    footerRightAccent: true,
-  },
-  {
-    label: 'Net Revenue Churn',
-    icon: 'sync_alt',
-    value: '1.8%',
-    delta: '-0.4% this cycle',
-    deltaLabel: 'healthy range (<2.5%)',
-    footerLeft: 'Delinquent churn',
-    footerRight: '0.2%',
-  },
-]
+const METRICS: RevenueMetric[] = []
 
 interface LedgerRow {
   id: string
@@ -77,14 +37,7 @@ interface LedgerRow {
   status: 'succeeded' | 'refunded' | 'pending' | 'disputed'
 }
 
-const LEDGER: LedgerRow[] = [
-  { id: 'INV-9481', customer: 'dev_elena@proton.me', plan: 'Pro Annual', planAccent: false, amount: '$290.00', method: 'Visa •••• 4242', methodIcon: 'credit_card', timestamp: 'Oct 31, 2024 14:22', status: 'succeeded' },
-  { id: 'INV-9480', customer: 'alex.chen@cmu.edu', plan: 'Pro Monthly', planAccent: false, amount: '$29.00', method: 'Apple Pay', methodIcon: 'phone_iphone', timestamp: 'Oct 31, 2024 13:05', status: 'succeeded' },
-  { id: 'INV-9479', customer: 'team@finscale.io', plan: 'Enterprise (5 Seats)', planAccent: true, amount: '$1,250.00', method: 'ACH Direct Wire', methodIcon: 'account_balance', timestamp: 'Oct 31, 2024 11:40', status: 'succeeded' },
-  { id: 'INV-9478', customer: 'm.torres@tech.co', plan: 'Pro Monthly', planAccent: false, amount: '$29.00', method: 'Mastercard •••• 8812', methodIcon: 'credit_card', timestamp: 'Oct 31, 2024 09:15', status: 'succeeded' },
-  { id: 'INV-9477', customer: 'candidate_anon@priv.org', plan: 'Pro Annual', planAccent: false, amount: '$290.00', method: 'Stripe SEPA Debit', methodIcon: 'euro', timestamp: 'Oct 30, 2024 22:50', status: 'succeeded' },
-  { id: 'INV-9476', customer: 'j.reynolds@consult.com', plan: 'Pro Monthly', planAccent: false, amount: '$29.00', amountStruck: true, method: 'Visa •••• 1094', methodIcon: 'credit_card', timestamp: 'Oct 30, 2024 19:12', status: 'refunded' },
-]
+const LEDGER: LedgerRow[] = []
 
 type LedgerFilter = 'all' | 'succeeded' | 'refunded' | 'disputed'
 

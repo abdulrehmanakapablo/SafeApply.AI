@@ -56,134 +56,59 @@ interface ReportView {
 // ─── Demo fallback (pilot mode) ──────────────────────────
 const DEMO_VIEW: ReportView = {
   extracted: {
-    role: 'Senior Distributed Systems Engineer',
-    seniority: 'Senior / Staff (L5+)',
-    experience_years: 5,
-    required_skills: ['Go', 'Kubernetes', 'Kafka', 'gRPC', 'Distributed Consensus', 'Raft'],
-    nice_to_have_skills: ['Rust', 'Terraform', 'eBPF', 'CockroachDB'],
-    salary_mentioned: true,
-    salary_text: '$185,000 – $225,000 USD + Equity',
-    location: 'Remote (US / EU Timezones)',
-    remote: true,
-    employment_type: 'Full-time Permanent',
-    company_name: 'Chronos Distributed Labs',
+    role: null,
+    seniority: null,
+    experience_years: null,
+    required_skills: [],
+    nice_to_have_skills: [],
+    salary_mentioned: false,
+    salary_text: null,
+    location: null,
+    remote: null,
+    employment_type: null,
+    company_name: null,
   },
   company: {
-    founded: '2019 (San Francisco, CA)',
-    funding_stage: 'Series B',
-    total_raised: '$42.5M USD',
-    last_round: 'Jan 2024 ($28M)',
-    employees: '145 Full-time',
-    investors: 'Sequoia, Benchmark, FF',
+    founded: '—',
+    funding_stage: '—',
+    total_raised: '—',
+    last_round: '—',
+    employees: '—',
+    investors: '—',
     source_url: 'https://crunchbase.com',
   },
   github: {
-    org_found: true,
-    public_repos: 42,
-    last_commit: '2 days ago (main branch)',
-    languages: ['Go', 'Rust', 'Kubernetes', 'gRPC'],
+    org_found: false,
+    public_repos: 0,
+    last_commit: null,
+    languages: [],
     source_url: 'https://github.com',
-    jd_tech: [
-      { name: 'Go', status: 'confirmed' },
-      { name: 'Kubernetes', status: 'confirmed' },
-      { name: 'Kafka', status: 'confirmed' },
-      { name: 'Rust', status: 'in_code' },
-      { name: 'gRPC / Protobuf', status: 'confirmed' },
-      { name: 'Cassandra', status: 'missing' },
-    ],
+    jd_tech: [],
   },
   ghost: {
-    postings: [
-      {
-        date: 'Oct 14, 2024',
-        platform: 'LinkedIn Jobs (Active)',
-        url: 'https://linkedin.com',
-      },
-      {
-        date: 'Aug 28, 2024',
-        platform: 'Indeed Recruiter (Stale)',
-        url: 'https://indeed.com',
-      },
-      {
-        date: 'Jun 10, 2024',
-        platform: 'Greenhouse Portal (Initial req_8841)',
-        url: 'https://greenhouse.io',
-      },
-    ],
-    probability: 48,
+    postings: [],
+    probability: 0,
     source_url: 'https://google.com',
   },
   news: {
-    articles: [
-      {
-        title:
-          'Chronos Unveils Zero-Overhead Consensus Layer for Enterprise Kubernetes',
-        source: 'TechCrunch',
-        published_at: 'Feb 12, 2025',
-        url: 'https://techcrunch.com',
-      },
-      {
-        title:
-          'How Benchmark-Backed Chronos Is Reworking Distributed Event Storage',
-        source: 'VentureBeat',
-        published_at: 'Jan 18, 2025',
-        url: 'https://venturebeat.com',
-      },
-      {
-        title:
-          'Infrastructure Startups Navigate Compressed Tech Budgets with Lean Engineering',
-        source: 'Bloomberg Technology',
-        published_at: 'Nov 29, 2024',
-        url: 'https://bloomberg.com',
-      },
-    ],
-    sentiment: 0.81,
+    articles: [],
+    sentiment: 0,
     source_url: 'https://newsapi.org',
   },
   reddit: {
-    sentiment: 'mostly_positive',
-    total: 142,
-    subreddits: [
-      {
-        name: 'r/ExperiencedDevs',
-        mentions: 64,
-        pos_pct: 88,
-        url: 'https://reddit.com/r/ExperiencedDevs',
-      },
-      {
-        name: 'r/cscareerquestions',
-        mentions: 51,
-        pos_pct: 72,
-        url: 'https://reddit.com/r/cscareerquestions',
-      },
-      {
-        name: 'r/recruitinghell',
-        mentions: 27,
-        pos_pct: 34,
-        url: 'https://reddit.com/r/recruitinghell',
-      },
-      {
-        name: 'r/jobs',
-        mentions: 0,
-        pos_pct: 0,
-        url: 'https://reddit.com/r/jobs',
-      },
-    ],
+    sentiment: 'mixed',
+    total: 0,
+    subreddits: [],
     source_url: 'https://reddit.com',
   },
   glassdoor: {
-    overall_rating: 4.2,
-    interview_difficulty: 'Medium',
-    offer_rate: 34,
-    recommend_percent: 82,
+    overall_rating: null,
+    interview_difficulty: null,
+    offer_rate: null,
+    recommend_percent: null,
     source_url: 'https://glassdoor.com',
   },
-  telemetry_sources: [
-    'Crunchbase',
-    'GitHub (42 repos)',
-    'Google Search',
-    'NewsAPI (90d)',
-  ],
+  telemetry_sources: [],
 }
 
 // ─── Transform backend report_data → view model ──────────
@@ -214,15 +139,13 @@ function toView(data: ReportData): ReportView {
 
 // ─── Component ────────────────────────────────────────────
 export default function CompanyReport() {
-  const [jdText, setJdText] = useState(
-    'Chronos Distributed Labs is seeking a Senior Distributed Systems Engineer to architect our next-generation consensus topology. \n\nRequirements:\n- 5+ years building fault-tolerant backend infrastructure in Go.\n- Production experience with Kubernetes operators, Kafka streaming topologies, and Raft/Paxos consensus primitives.\n- Deep familiarity with gRPC, AWS core networking, and low-latency RPC serialization.\n- Bonus: Rust, eBPF, CockroachDB internals.'
-  )
-  const [companyName, setCompanyName] = useState('Chronos Distributed Labs')
-  const [jobTitle, setJobTitle] = useState('Senior Distributed Systems Engineer')
+  const [jdText, setJdText] = useState('')
+  const [companyName, setCompanyName] = useState('')
+  const [jobTitle, setJobTitle] = useState('')
 
   const [view, setView] = useState<ReportView>(DEMO_VIEW)
   const [running, setRunning] = useState(false)
-  const [refreshedAt, setRefreshedAt] = useState('Data refreshed 2m ago')
+  const [refreshedAt, setRefreshedAt] = useState('')
   const [savedToBackend, setSavedToBackend] = useState(false)
   const [shareCopied, setShareCopied] = useState(false)
 

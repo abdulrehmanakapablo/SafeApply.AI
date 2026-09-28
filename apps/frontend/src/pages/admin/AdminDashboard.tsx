@@ -40,28 +40,21 @@ interface DemoUser {
 
 // ─── Demo fallback ──────────────────────────────────────
 const DEMO_METRICS: Metrics = {
-  total_users: 42891,
-  active_this_month: 31420,
-  verified_reviews: 18942,
-  new_today: 184,
-  mrr: 128450,
-  arr: 1541400,
-  daily_syncs: 9420,
-  sync_error_rate: 0.04,
-  moderation_backlog: 14,
-  churn_rate: 1.8,
-  organic_referral_rate: 68.4,
-  growth_velocity: '+1.4k/wk',
+  total_users: 0,
+  active_this_month: 0,
+  verified_reviews: 0,
+  new_today: 0,
+  mrr: 0,
+  arr: 0,
+  daily_syncs: 0,
+  sync_error_rate: 0,
+  moderation_backlog: 0,
+  churn_rate: 0,
+  organic_referral_rate: 0,
+  growth_velocity: '—',
 }
 
-const DEMO_USERS: DemoUser[] = [
-  { id: 'u1', email: 'dev_elena@proton.me', initials: 'EC', uid: 'usr_89f02a', plan: 'pro', plan_label: 'Pro Annual', timestamp: '2 mins ago', channel: 'GitHub OAuth', channel_icon: 'terminal', verified: 'attested' },
-  { id: 'u2', email: 'alex.chen@alumni.cmu.edu', initials: 'AC', uid: 'usr_4b18cd', plan: 'enterprise', plan_label: 'Enterprise Seat', timestamp: '11 mins ago', channel: 'SSO / Okta SAML', channel_icon: 'corporate_fare', verified: 'attested' },
-  { id: 'u3', email: 'marcus.k@fastmail.com', initials: 'MK', uid: 'usr_09de11', plan: 'free', plan_label: 'Free Tier', timestamp: '26 mins ago', channel: 'Direct / Organic', channel_icon: 'link', verified: 'pending' },
-  { id: 'u4', email: 's.zimmerman@berlin-tech.io', initials: 'SZ', uid: 'usr_e771c9', plan: 'pro', plan_label: 'Pro Monthly', timestamp: '44 mins ago', channel: 'LinkedIn Referral', channel_icon: 'share', verified: 'attested' },
-  { id: 'u5', email: 'tanya.rodriguez@yc-alumni.net', initials: 'TR', uid: 'usr_bb2340', plan: 'pro', plan_label: 'Pro Annual', timestamp: '1 hr ago', channel: 'YCombinator Jobs', channel_icon: 'campaign', verified: 'attested' },
-  { id: 'u6', email: 'jonah.w@resumelab.internal', initials: 'JW', uid: 'usr_33a90f', plan: 'free', plan_label: 'Free Tier', timestamp: '1 hr 14m ago', channel: 'Google Search ATS', channel_icon: 'search', verified: 'attested' },
-]
+const DEMO_USERS: DemoUser[] = []
 
 // ─── Helpers ────────────────────────────────────────────
 function toDemoUser(u: AdminUser): DemoUser {

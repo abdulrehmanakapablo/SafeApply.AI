@@ -60,66 +60,18 @@ function uid(prefix = 'id'): string {
 // ─── Default (demo) CV ───────────────────────────────────
 const DEFAULT_CV: CVData = {
   personal: {
-    full_name: 'Alex Vance',
-    job_title: 'Staff Distributed Systems Engineer',
-    email: 'alex.vance@neural-systems.io',
-    phone: '(415) 890-2104',
-    location: 'San Francisco, CA',
-    linkedin: 'linkedin.com/in/alexvance',
-    github: 'github.com/alexvance',
-    summary:
-      'Staff-level Distributed Systems & Infrastructure Engineer with 8+ years architecting fault-tolerant primitives, low-latency consensus algorithms, and telemetry fabrics across multi-region Kubernetes clusters.',
+    full_name: '',
+    job_title: '',
+    email: '',
+    phone: '',
+    location: '',
+    linkedin: '',
+    github: '',
+    summary: '',
   },
-  experience: [
-    {
-      id: uid('exp'),
-      company: 'Chronos Distributed Labs',
-      role: 'Senior Distributed Systems Engineer',
-      start_date: 'Jan 2022',
-      end_date: null,
-      is_current: true,
-      bullets: [
-        'Architected real-time raft consensus engine handling 4.2M daily telemetry requests; reduced P99 latency by 38%.',
-        'Engineered zero-knowledge proof verification pipeline using Go & Rust, passing all SOC2 compliance audits.',
-      ],
-    },
-    {
-      id: uid('exp'),
-      company: 'Datadog',
-      role: 'Software Engineer II',
-      start_date: 'Jun 2019',
-      end_date: 'Dec 2021',
-      is_current: false,
-      bullets: [
-        'Maintained telemetry aggregation agents across 10,000+ Kubernetes clusters with 99.99% reliability.',
-        'Refactored ingest pipelines to reduce agent memory footprint by 22% across multi-tenant fleet environments.',
-      ],
-    },
-  ],
-  education: [
-    {
-      id: uid('edu'),
-      institution: 'University of California, Berkeley',
-      degree: 'B.S.',
-      field: 'Electrical Engineering & Computer Science',
-      start_date: '2015',
-      end_date: '2019',
-    },
-  ],
-  skills: [
-    'Go',
-    'Rust',
-    'TypeScript',
-    'Python',
-    'C++',
-    'gRPC',
-    'PostgreSQL',
-    'Docker',
-    'Kubernetes',
-    'AWS',
-    'Terraform',
-    'Prometheus',
-  ],
+  experience: [],
+  education: [],
+  skills: [],
   projects: [],
   certifications: [],
 }
@@ -267,9 +219,9 @@ export default function CVBuilder() {
 
   const ats = computeATS(cv)
   const completion = Math.round((ats.score / 100) * 100)
-  const sessionLabel = `Session: OP-${(user?.id || '7492')
+  const sessionLabel = `Session: OP-${(user?.id || '0000')
     .slice(0, 4)
-    .toUpperCase()}_${cv.personal.full_name.split(' ')[0] || 'Vance'}_Resume_v4`
+    .toUpperCase()}_${cv.personal.full_name.split(' ')[0] || 'Untitled'}_Resume_v4`
 
   const scale = Math.max(50, Math.min(150, zoom)) / 100
 
