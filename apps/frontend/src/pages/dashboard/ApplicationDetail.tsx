@@ -83,87 +83,9 @@ function formatSalary(min?: number | null, max?: number | null): string {
   return `Up to ${fmt(max as number)} USD`
 }
 
-// ─── Demo fallback (pilot mode) ───────────────────────────
-const DEMO_APP: AppDetail = {
-  id: 'demo-app-8492-stripe',
-  user_id: 'dev-user-0001',
-  company_name: 'Stripe',
-  job_title: 'Senior Frontend Engineer — Payments & Billing UI',
-  date_applied: '2024-10-24',
-  job_link: 'https://stripe.com/jobs/req-99410',
-  salary_min: 195000,
-  salary_max: 225000,
-  location: 'San Francisco, CA (Hybrid)',
-  status: 'interviewing',
-  notes:
-    'Recruiter Sarah noted that the team is specifically looking for deep experience in WebGL or high-throughput DOM virtualization for the new Billing Dashboard redesign. Emphasize raft consensus visualization project and sub-millisecond table latency from Chronos experience during technical loop on Thursday.',
-  jd_text: `About the Role
-We are looking for a Senior Frontend Engineer to join our Payments & Billing Infrastructure team. In this role, you will architect, build, and maintain the mission-critical interfaces that millions of global businesses rely on every single second. You will ensure sub-100ms render speeds across data-dense tables, dynamic invoicing ledgers, and complex transaction rule trees.
+const DEMO_MATCHED_SKILLS: string[] = []
 
-Minimum Requirements
-- 6+ years building world-class client-side web applications using React, TypeScript, and modern JavaScript standards.
-- Deep intuition for Web Performance, DOM recycling, virtualized collections, and zero-layout-shift design.
-- Strong foundation in state management using deterministic state machines (XState or similar) and real-time streaming architectures.
-- Demonstrated track record crafting accessible, high-fidelity UI systems with rigorous test automation.
-
-Technical Stack
-TypeScript, React 19, GraphQL, Relay Modern, Canvas/WebGL rendering pipelines, Tailwind CSS, Custom Web Components, Node.js, Vitest, Playwright.
-
-Perks & Equity
-$195,000 - $225,000 base salary + competitive equity grant + comprehensive health, retirement matching, and $1,500 annual workspace stipend.`,
-  match_score: 96,
-  created_at: '2024-10-22T10:00:00Z',
-  updated_at: new Date().toISOString(),
-  timeline: [
-    { id: 't1', application_id: 'demo-app-8492-stripe', status: 'interviewing', changed_at: '2024-11-02T09:00:00Z' },
-    { id: 't2', application_id: 'demo-app-8492-stripe', status: 'screening',    changed_at: '2024-10-28T09:00:00Z' },
-    { id: 't3', application_id: 'demo-app-8492-stripe', status: 'applied',      changed_at: '2024-10-24T09:00:00Z' },
-    { id: 't4', application_id: 'demo-app-8492-stripe', status: 'saved',        changed_at: '2024-10-22T09:00:00Z' },
-  ],
-  communication_log: [
-    {
-      id: 'c1',
-      application_id: 'demo-app-8492-stripe',
-      type: 'interview',
-      notes:
-        'Technical architecture round confirmed with Staff Frontend Engineer Alex Chen. Topic: State machines & latency-critical UI components.',
-      date: '2024-11-02T09:00:00Z',
-      created_at: '2024-11-02T09:00:00Z',
-    },
-    {
-      id: 'c2',
-      application_id: 'demo-app-8492-stripe',
-      type: 'call',
-      notes:
-        '30-min phone screen with Sarah Lindqvist. Discussed remote hybrid cadence, compensation band ($195k–$225k base), and team structure.',
-      date: '2024-10-28T09:00:00Z',
-      created_at: '2024-10-28T09:00:00Z',
-    },
-    {
-      id: 'c3',
-      application_id: 'demo-app-8492-stripe',
-      type: 'email',
-      notes:
-        'Automated Greenhouse confirmation receipt received with application reference code STR-9921-X.',
-      date: '2024-10-24T09:00:00Z',
-      created_at: '2024-10-24T09:00:00Z',
-    },
-  ],
-}
-
-const DEMO_MATCHED_SKILLS = [
-  'React',
-  'TypeScript',
-  'GraphQL',
-  'Web Performance',
-  'State Machines',
-  'Canvas API',
-]
-
-const DEMO_MISSING: { skill: string; severity: 'yellow' | 'red' }[] = [
-  { skill: 'Distributed Ledger (not mentioned)', severity: 'yellow' },
-  { skill: 'FinTech Compliance', severity: 'red' },
-]
+const DEMO_MISSING: { skill: string; severity: 'yellow' | 'red' }[] = []
 
 // ─── Small building blocks ────────────────────────────────
 function ScoreGauge({ score }: { score: number }) {
@@ -272,17 +194,11 @@ export default function ApplicationDetailPage() {
           setNotes(res.data.notes || '')
           lastSavedNotesRef.current = res.data.notes || ''
         } else {
-          // fall back to demo when backend returns nothing
-          setApp(DEMO_APP)
-          setNotes(DEMO_APP.notes || '')
-          lastSavedNotesRef.current = DEMO_APP.notes || ''
+          setNotFound(true)
         }
       } catch {
         if (cancelled) return
-        // fall back to demo on network/401/404 in pilot mode
-        setApp(DEMO_APP)
-        setNotes(DEMO_APP.notes || '')
-        lastSavedNotesRef.current = DEMO_APP.notes || ''
+        setNotFound(true)
       } finally {
         if (!cancelled) setLoading(false)
       }

@@ -14,64 +14,7 @@ import { Link } from 'react-router-dom'
 import SEO from '../../components/SEO'
 import { getSavedCVs, deleteSavedCV, type SavedCV, type CVData } from '../../api/cv'
 
-// ─── Demo fallback (pilot mode) ─────────────────────────
-function buildDemoCVDATA(name: string, role: string): CVData {
-  return {
-    personal: {
-      full_name: name,
-      job_title: role,
-      email: 'demo@safeapply.ai',
-      phone: '(000) 000-0000',
-      location: 'Remote',
-      linkedin: '',
-      github: '',
-      summary:
-        'Experienced engineer with a track record of shipping production systems and leading small teams.',
-    },
-    experience: [
-      {
-        id: 'demo-exp-1',
-        company: 'Chronos Distributed Labs',
-        role: role,
-        start_date: 'Jan 2022',
-        end_date: null,
-        is_current: true,
-        bullets: ['Shipped production systems', 'Reduced latency', 'Led small team'],
-      },
-    ],
-    education: [],
-    skills: ['TypeScript', 'React', 'Node.js', 'PostgreSQL'],
-    projects: [],
-    certifications: [],
-  }
-}
-
-const DEMO_CVS: SavedCV[] = [
-  {
-    id: 'demo-cv-1',
-    user_id: 'dev-user-0001',
-    name: 'Alex Vance — Senior Frontend Engineer',
-    cv_data: buildDemoCVDATA('Alex Vance', 'Senior Frontend Engineer'),
-    created_at: new Date(Date.now() - 3 * 86_400_000).toISOString(),
-    updated_at: new Date(Date.now() - 1 * 86_400_000).toISOString(),
-  },
-  {
-    id: 'demo-cv-2',
-    user_id: 'dev-user-0001',
-    name: 'Alex Vance — Staff Product Designer',
-    cv_data: buildDemoCVDATA('Alex Vance', 'Staff Product Designer'),
-    created_at: new Date(Date.now() - 12 * 86_400_000).toISOString(),
-    updated_at: new Date(Date.now() - 8 * 86_400_000).toISOString(),
-  },
-  {
-    id: 'demo-cv-3',
-    user_id: 'dev-user-0001',
-    name: 'Alex Vance — Infrastructure Engineer (v3)',
-    cv_data: buildDemoCVDATA('Alex Vance', 'Infrastructure Engineer'),
-    created_at: new Date(Date.now() - 40 * 86_400_000).toISOString(),
-    updated_at: new Date(Date.now() - 30 * 86_400_000).toISOString(),
-  },
-]
+const DEMO_CVS: SavedCV[] = []
 
 // ─── Helpers ────────────────────────────────────────────
 function formatDate(iso: string): string {

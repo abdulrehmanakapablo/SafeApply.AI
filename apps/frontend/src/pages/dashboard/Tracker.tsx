@@ -65,48 +65,7 @@ interface DemoApp {
   icon: string
 }
 
-const d = (daysAgo: number) =>
-  new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10)
-
-const DEMO_APPS: DemoApp[] = [
-  // SAVED
-  { id: 'd1', company_name: 'Datadog',  job_title: 'Staff Distributed Systems Eng', status: 'saved', date_applied: d(2),  salary_min: 210000, salary_max: 240000, location: 'Remote (US)',   match_score: 94, source_tag: 'Remote (US)',     icon: 'bookmark' },
-  { id: 'd2', company_name: 'Stripe',   job_title: 'Infrastructure Architect',     status: 'saved', date_applied: d(3),  salary_min: 195000, salary_max: 225000, location: 'San Francisco', match_score: 89, source_tag: 'San Francisco',   icon: 'bookmark' },
-  { id: 'd3', company_name: 'Vercel',   job_title: 'Edge Runtime Engineer',        status: 'saved', date_applied: d(5),  salary_min: 175000, salary_max: 205000, location: 'Hybrid',        match_score: 78, source_tag: 'Hybrid',          icon: 'bookmark' },
-
-  // APPLIED
-  { id: 'd4', company_name: 'Linear',     job_title: 'Full-Stack Sync Core',      status: 'applied', date_applied: d(4),  salary_min: 180000, salary_max: 210000, match_score: 96, source_tag: 'Direct Apply',      status_note: 'Direct Apply',  icon: 'check_circle' },
-  { id: 'd5', company_name: 'Anthropic',  job_title: 'Platform Security Lead',    status: 'applied', date_applied: d(6),  salary_min: 220000, salary_max: 260000, match_score: 91, source_tag: 'SafeApply Tailored', status_note: 'Tailored CV',   icon: 'send' },
-  { id: 'd6', company_name: 'Figma',      job_title: 'Graphics Engine Dev',       status: 'applied', date_applied: d(8),  salary_min: 190000, salary_max: 215000, match_score: 82, source_tag: 'Greenhouse ATS',    status_note: 'Greenhouse',    icon: 'mark_email_read' },
-  { id: 'd7', company_name: 'Supabase',   job_title: 'Database Reliability Eng',  status: 'applied', date_applied: d(9),  salary_min: 170000, salary_max: 200000, match_score: 95, source_tag: 'Lever ATS',         status_note: 'Lever',         icon: 'schedule' },
-  { id: 'd8', company_name: 'Cloudflare', job_title: 'Systems Engineer, Rust',    status: 'applied', date_applied: d(10), salary_min: 165000, salary_max: 190000, match_score: 75, source_tag: 'Workday',           status_note: 'Workday',       icon: 'sync' },
-  { id: 'd9', company_name: 'Scale AI',   job_title: 'Data Ingestion Eng',        status: 'applied', date_applied: d(12), salary_min: 185000, salary_max: 215000, match_score: 88, source_tag: 'Ashby',             status_note: 'Ashby',         icon: 'hourglass_empty' },
-
-  // SCREENING
-  { id: 'd10', company_name: 'GitHub',     job_title: 'Copilot Infrastructure',   status: 'screening', date_applied: d(11), salary_min: 190000, salary_max: 220000, match_score: 93, source_tag: 'Recruiter Ping', status_note: 'Recruiter call',  icon: 'phone_in_talk' },
-  { id: 'd11', company_name: 'Retool',     job_title: 'Backend Infrastructure',   status: 'screening', date_applied: d(13), salary_min: 175000, salary_max: 205000, match_score: 90, source_tag: 'Karat Assessment', status_note: 'Async screen',  icon: 'quiz' },
-  { id: 'd12', company_name: 'Postman',    job_title: 'API Platform Engineer',    status: 'screening', date_applied: d(15), salary_min: 165000, salary_max: 190000, match_score: 81, source_tag: 'HR Passed',       status_note: 'Completed',       icon: 'done_all' },
-  { id: 'd13', company_name: 'HashiCorp',  job_title: 'Terraform Core Eng',       status: 'screening', date_applied: d(16), salary_min: 180000, salary_max: 210000, match_score: 87, source_tag: 'Oct 28 Call',     status_note: 'Scheduled',       icon: 'event' },
-
-  // INTERVIEWING
-  { id: 'd14', company_name: 'Sentry',     job_title: 'Telemetry Pipelines Lead', status: 'interviewing', date_applied: d(18), salary_min: 195000, salary_max: 220000, match_score: 97, source_tag: 'Architecture 1:1', status_note: 'Round 3: Onsite', icon: 'groups' },
-  { id: 'd15', company_name: 'Notion',     job_title: 'Senior Infrastructure Eng', status: 'interviewing', date_applied: d(20), salary_min: 185000, salary_max: 215000, match_score: 92, source_tag: 'Live Coding Pair', status_note: 'Round 2',          icon: 'terminal' },
-  { id: 'd16', company_name: 'PlanetScale', job_title: 'Distributed Vitess Eng',  status: 'interviewing', date_applied: d(22), salary_min: 190000, salary_max: 225000, match_score: 85, source_tag: 'Deep Dive',         status_note: 'Round 2 Passed',   icon: 'badge' },
-
-  // OFFERED
-  { id: 'd17', company_name: 'Tailscale',  job_title: 'WireGuard Kernel Eng',     status: 'offered', date_applied: d(25), salary_min: 215000, salary_max: 215000, match_score: 98, source_tag: 'Offer in Hand', status_note: '+ 0.08% Equity', icon: 'verified' },
-  { id: 'd18', company_name: 'Fly.io',     job_title: 'Host Systems Engineer',    status: 'offered', date_applied: d(28), salary_min: 195000, salary_max: 195000, match_score: 94, source_tag: 'Reviewing Docs', status_note: 'Full Remote',    icon: 'task_alt' },
-
-  // REJECTED
-  { id: 'd19', company_name: 'OpenAI',   job_title: 'Inference Systems Architect', status: 'rejected', date_applied: d(30), salary_min: 260000, salary_max: 320000, match_score: 91, source_tag: 'Role Frozen',       status_note: 'Post-Screen',      icon: 'cancel' },
-  { id: 'd20', company_name: 'Airbnb',   job_title: 'Core Reliability Eng',        status: 'rejected', date_applied: d(32), salary_min: 185000, salary_max: 210000, match_score: 74, source_tag: 'Resume Mismatch',    status_note: 'ATS Filter',       icon: 'block' },
-  { id: 'd21', company_name: 'Netflix',  job_title: 'Video Streaming Core',        status: 'rejected', date_applied: d(35), salary_min: 240000, salary_max: 240000, match_score: 88, source_tag: 'Headcount Change',  status_note: 'Post-Loop',        icon: 'history' },
-  { id: 'd22', company_name: 'Discord',  job_title: 'Voice Gateway Team',          status: 'rejected', date_applied: d(38), salary_min: 170000, salary_max: 200000, match_score: 79, source_tag: 'No feedback',       status_note: 'Oct 10',           icon: 'do_not_disturb_on' },
-
-  // GHOSTED
-  { id: 'd23', company_name: 'Coinbase', job_title: 'Crypto Node Reliability', status: 'ghosted', date_applied: d(45), salary_min: 175000, salary_max: 210000, match_score: 80, source_tag: 'SafeApply Pings: 3', status_note: '28d silent', icon: 'wifi_tethering_off' },
-  { id: 'd24', company_name: 'Brex',     job_title: 'Ledger Transaction Eng',  status: 'ghosted', date_applied: d(50), salary_min: 165000, salary_max: 190000, match_score: 76, source_tag: 'Archived',           status_note: '34d silent', icon: 'visibility_off' },
-]
+const DEMO_APPS: DemoApp[] = []
 
 // ─── Helpers ────────────────────────────────────────────
 function formatDate(iso: string): string {

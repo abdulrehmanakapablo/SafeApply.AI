@@ -107,7 +107,7 @@ const TIERS: Tier[] = [
 const QUOTAS: QuotaGauge[] = [
   {
     label: 'AI ATS Analyses',
-    used: 14,
+    used: 0,
     total: 20,
     barColor: 'bg-[#22c55e]',
     remainingLabel: (n) => `${n} remaining`,
@@ -116,7 +116,7 @@ const QUOTAS: QuotaGauge[] = [
   },
   {
     label: 'Active Tracked Apps',
-    used: 8,
+    used: 0,
     total: 10,
     barColor: 'bg-[#EAB308]',
     remainingLabel: (n) => `${n} slots left`,
@@ -125,7 +125,7 @@ const QUOTAS: QuotaGauge[] = [
   },
   {
     label: 'Intelligence Audits',
-    used: 2,
+    used: 0,
     total: 3,
     barColor: 'bg-[#22c55e]',
     remainingLabel: (n) => `${n} report${n === 1 ? '' : 's'} left`,
@@ -134,11 +134,7 @@ const QUOTAS: QuotaGauge[] = [
   },
 ]
 
-const INVOICES: Invoice[] = [
-  { id: 'INV-2024-003', date: 'Oct 24, 2024', amount: '$0.00 USD', status: 'PAID' },
-  { id: 'INV-2024-002', date: 'Sep 24, 2024', amount: '$0.00 USD', status: 'PAID' },
-  { id: 'INV-2024-001', date: 'Aug 24, 2024', amount: '$0.00 USD', status: 'PAID' },
-]
+const INVOICES: Invoice[] = []
 
 // ─── Small building blocks ────────────────────────────────
 function SectionLabel({ children }: { children: React.ReactNode }) {

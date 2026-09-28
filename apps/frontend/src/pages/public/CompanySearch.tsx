@@ -25,17 +25,7 @@ interface CompanyCard {
 }
 
 // Fallback demo data — shown when backend returns nothing (pilot mode)
-const DEMO_COMPANIES: CompanyCard[] = [
-  { id: '1', slug: 'stripe',     name: 'Stripe',     industry: 'Fintech / Infrastructure', location: 'San Francisco, CA • Remote',      open_roles: 18, rating: 4.8, review_count: 312, culture: 4.7, interview_difficulty: 'Medium', interview_score: 4.1, recommend: 94 },
-  { id: '2', slug: 'linear',     name: 'Linear',     industry: 'Developer Tools',           location: 'Global • Fully Remote',           open_roles: 6,  rating: 4.9, review_count: 89,  culture: 4.9, interview_difficulty: 'Hard',   interview_score: 4.4, recommend: 98 },
-  { id: '3', slug: 'datadog',    name: 'Datadog',    industry: 'Observability & Cloud',     location: 'New York, NY • Hybrid',           open_roles: 42, rating: 4.6, review_count: 215, culture: 4.5, interview_difficulty: 'Hard',   interview_score: 4.3, recommend: 91 },
-  { id: '4', slug: 'anthropic',  name: 'Anthropic',  industry: 'AI & Research',             location: 'San Francisco, CA • Hybrid',      open_roles: 24, rating: 4.8, review_count: 142, culture: 4.8, interview_difficulty: 'Hard',   interview_score: 4.6, recommend: 96 },
-  { id: '5', slug: 'figma',      name: 'Figma',      industry: 'Design Platform',           location: 'San Francisco, CA • Hybrid',      open_roles: 11, rating: 4.7, review_count: 188, culture: 4.8, interview_difficulty: 'Medium', interview_score: 3.9, recommend: 95 },
-  { id: '6', slug: 'vercel',     name: 'Vercel',     industry: 'Developer Tools',           location: 'San Francisco, CA • Remote',      open_roles: 15, rating: 4.7, review_count: 165, culture: 4.6, interview_difficulty: 'Medium', interview_score: 4.0, recommend: 93 },
-  { id: '7', slug: 'supabase',   name: 'Supabase',   industry: 'Developer Tools',           location: 'Singapore / Global • Remote',     open_roles: 8,  rating: 4.9, review_count: 94,  culture: 4.9, interview_difficulty: 'Medium', interview_score: 3.8, recommend: 97 },
-  { id: '8', slug: 'openai',     name: 'OpenAI',     industry: 'AI & Research',             location: 'San Francisco, CA • On-site',     open_roles: 37, rating: 4.5, review_count: 428, culture: 4.3, interview_difficulty: 'Hard',   interview_score: 4.7, recommend: 88 },
-  { id: '9', slug: 'cloudflare', name: 'Cloudflare', industry: 'Fintech / Infrastructure', location: 'San Francisco, CA • Hybrid',      open_roles: 29, rating: 4.6, review_count: 278, culture: 4.5, interview_difficulty: 'Medium', interview_score: 4.0, recommend: 92 },
-]
+const DEMO_COMPANIES: CompanyCard[] = []
 
 const INDUSTRIES = [
   'All Industries',

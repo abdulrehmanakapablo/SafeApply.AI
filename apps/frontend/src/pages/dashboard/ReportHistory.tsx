@@ -23,56 +23,7 @@ interface ReportRow {
 }
 
 // ─── Demo fallback (pilot mode) ─────────────────────────
-const DEMO_ROWS: ReportRow[] = [
-  {
-    id: 'demo-r1',
-    company_name: 'Stripe',
-    job_title: 'Senior Frontend Engineer',
-    created_at: new Date(Date.now() - 2 * 86_400_000).toISOString(),
-  },
-  {
-    id: 'demo-r2',
-    company_name: 'Linear',
-    job_title: 'Staff Product Designer',
-    created_at: new Date(Date.now() - 5 * 86_400_000).toISOString(),
-  },
-  {
-    id: 'demo-r3',
-    company_name: 'Anthropic',
-    job_title: 'Research Engineer',
-    created_at: new Date(Date.now() - 9 * 86_400_000).toISOString(),
-  },
-  {
-    id: 'demo-r4',
-    company_name: 'Supabase',
-    job_title: 'Developer Advocate',
-    created_at: new Date(Date.now() - 14 * 86_400_000).toISOString(),
-  },
-  {
-    id: 'demo-r5',
-    company_name: 'Vercel',
-    job_title: 'Cloud Infrastructure Engineer',
-    created_at: new Date(Date.now() - 20 * 86_400_000).toISOString(),
-  },
-  {
-    id: 'demo-r6',
-    company_name: 'Datadog',
-    job_title: null,
-    created_at: new Date(Date.now() - 28 * 86_400_000).toISOString(),
-  },
-  {
-    id: 'demo-r7',
-    company_name: 'Figma',
-    job_title: 'Design Systems Engineer',
-    created_at: new Date(Date.now() - 35 * 86_400_000).toISOString(),
-  },
-  {
-    id: 'demo-r8',
-    company_name: 'Cloudflare',
-    job_title: 'Security Engineer',
-    created_at: new Date(Date.now() - 45 * 86_400_000).toISOString(),
-  },
-]
+const DEMO_ROWS: ReportRow[] = []
 
 const PAGE_SIZE = 20
 
