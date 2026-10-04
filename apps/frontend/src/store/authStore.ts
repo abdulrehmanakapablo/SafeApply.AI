@@ -1,16 +1,13 @@
 // FILE: src/store/authStore.ts
-// PURPOSE: Global auth state — user object, access token, actions.
-// Persists to localStorage so users stay logged in across reloads.
-//
-// NOTE: The persist key is 'safeapply-auth'. That's the key Zustand
-// writes to localStorage. When logging out, we don't need to remove it
-// manually — persist automatically rewrites it with the new (empty)
-// state after set() runs.
+// PURPOSE: Global auth state. Persisted under 'safeapply-auth'.
+//          The raw access token lives in localStorage as 'access_token';
+//          the store keeps a mirror for components that want it.
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import type { Portal } from '../lib/roles'
 
-interface User {
+export interface User {
   id: string
   email: string
   full_name: string
@@ -33,6 +30,9 @@ interface AuthState {
   user: User | null
   token: string | null
   isAuthenticated: boolean
+  /** Admins only: the one portal they're locked into. Ignored for other roles. */
+  adminPortal: Portal | null
+  setAdminPortal: (p: Portal | null) => void
   login: (user: User, token: string) => void
   logout: () => void
   setUser: (user: User) => void
@@ -45,6 +45,9 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       token: null,
       isAuthenticated: false,
+      adminPortal: null,
+
+      setAdminPortal: (adminPortal) => set({ adminPortal }),
 
       login: (user, token) => {
         localStorage.setItem('access_token', token)
@@ -52,11 +55,8 @@ export const useAuthStore = create<AuthState>()(
       },
 
       logout: () => {
-        // Clear the raw token
         localStorage.removeItem('access_token')
-        // Reset store state. persist will rewrite 'safeapply-auth' with
-        // this empty state automatically — no manual removeItem needed.
-        set({ user: null, token: null, isAuthenticated: false })
+        set({ user: null, token: null, isAuthenticated: false, adminPortal: null })
       },
 
       setUser: (user) => set({ user }),
@@ -68,13 +68,18 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'safeapply-auth',
-      partialize: (state) => ({
+      partialize: (state: AuthState) => ({
         user: state.user,
         isAuthenticated: state.isAuthenticated,
-        // Note: token is intentionally NOT persisted. The real token
-        // lives in localStorage as 'access_token' — the store's `token`
-        // field is just a mirror for components that want it in memory.
+        adminPortal: state.adminPortal,
       }),
-    }
-  )
+    },
+  ),
 )
+
+/** True only when the store flag AND a real token exist. The flag alone can be stale. */
+export function useIsAuthed(): boolean {
+  const flag = useAuthStore((s) => s.isAuthenticated)
+  if (!flag || typeof window === 'undefined') return false
+  return Boolean(localStorage.getItem('access_token'))
+}

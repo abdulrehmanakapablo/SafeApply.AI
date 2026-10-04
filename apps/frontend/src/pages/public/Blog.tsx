@@ -1,127 +1,88 @@
 // FILE: src/pages/public/Blog.tsx
-// ROUTE: /blog (public)
+// ROUTE: /blog
 
-import { Link } from 'react-router-dom';
-import SEO, { SITE_URL } from '../../components/SEO';
-import Logo from '../../components/ui/Logo';
-import { BLOG_POSTS } from '../../data/blogPosts';
-
-const BLOG_JSONLD = {
-  '@context': 'https://schema.org',
-  '@type': 'Blog',
-  name: 'SafeApply.AI Blog',
-  url: `${SITE_URL}/blog`,
-  description:
-    'Actionable guides on company research, ATS resume optimization, ghost job detection, and job search analytics.',
-  blogPost: BLOG_POSTS.map((p) => ({
-    '@type': 'BlogPosting',
-    headline: p.title,
-    url: `${SITE_URL}/blog/${p.slug}`,
-    datePublished: p.date,
-    author: { '@type': 'Organization', name: p.author },
-  })),
-};
+import { Link } from 'react-router-dom'
+import SEO, { SITE_URL } from '../../components/SEO'
+import PublicLayout from '../../components/layout/PublicLayout'
+import { Reveal } from '../../components/motion/Reveal'
+import { Icon, formatDate } from '../../components/ui'
+import { BLOG_POSTS } from '../../data/blogPosts'
 
 export default function Blog() {
-  const [featured, ...posts] = BLOG_POSTS;
+  const posts = [...BLOG_POSTS].sort((a, b) => b.date.localeCompare(a.date))
+  const [featured, ...rest] = posts
 
   return (
-    <div className="min-h-screen bg-black text-white">
+    <PublicLayout>
       <SEO
-        title="SafeApply.AI Blog — Company Research & Job Search Guides"
-        description="Actionable guides on researching companies before applying, beating ATS parsers, spotting ghost job postings, and running a job search with data instead of guesswork."
+        title="Blog | SafeApply.AI"
+        description="Practical guides on researching employers, writing CVs that screening software can read, spotting reposted jobs and tracking a search."
         path="/blog"
-        jsonLd={BLOG_JSONLD}
+        jsonLd={{
+          '@context': 'https://schema.org',
+          '@type': 'Blog',
+          name: 'SafeApply.AI Blog',
+          url: `${SITE_URL}/blog`,
+          blogPost: posts.map((p) => ({
+            '@type': 'BlogPosting',
+            headline: p.title,
+            url: `${SITE_URL}/blog/${p.slug}`,
+            datePublished: p.date,
+            author: { '@type': 'Organization', name: p.author },
+          })),
+        }}
       />
 
-      {/* Header — logo left, back to website right */}
-      <header className="w-full max-w-[80rem] mx-auto px-6 py-5 flex items-center justify-between">
-        <Link to="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
-          <Logo className="h-8 w-auto" />
-        </Link>
-        <Link
-          to="/"
-          className="flex items-center gap-1 text-[#737373] hover:text-white transition-colors text-xs font-semibold uppercase tracking-wider"
-        >
-          <span className="material-symbols-outlined text-[16px]">arrow_back</span>
-          Back to website
-        </Link>
-      </header>
-
-      {/* Header */}
-      <section className="border-b border-[#1A1A1A]">
-        <div className="mx-auto max-w-5xl px-6 py-16">
-          <p className="mb-3 text-sm font-medium uppercase tracking-widest text-[#22C55E]">Blog</p>
-          <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">Job search intelligence</h1>
-          <p className="mt-4 max-w-2xl text-lg text-[#737373]">
-            Guides on company due diligence, ATS resume optimization, ghost job detection,
-            and running a search with evidence instead of hope. No fluff, no listicles — methods.
+      <section className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-16 sm:pt-24 pb-12">
+        <Reveal>
+          <h1 className="text-4xl sm:text-5xl font-semibold tracking-[-0.03em] leading-[1.05]">Notes on job hunting</h1>
+          <p className="mt-4 text-lg text-muted max-w-[52ch] leading-relaxed">
+            How to research an employer, write for the screening software, and keep a search organised.
           </p>
-        </div>
+        </Reveal>
       </section>
 
-      {/* Featured post */}
-      <section className="border-b border-[#1A1A1A]">
-        <Link
-          to={`/blog/${featured.slug}`}
-          className="mx-auto block max-w-5xl px-6 py-10 transition-colors hover:bg-[#0D0D0D]"
-        >
-          <article>
-            <p className="text-xs font-medium uppercase tracking-widest text-[#22C55E]">
-              Featured — {featured.readTime} min read
-            </p>
-            <h2 className="mt-3 max-w-3xl text-3xl font-bold leading-tight">{featured.title}</h2>
-            <p className="mt-3 max-w-2xl text-[#737373]">{featured.excerpt}</p>
-            <p className="mt-4 text-sm text-[#737373]">
-              {new Date(featured.date).toLocaleDateString('en-US', {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-              })}
-            </p>
-          </article>
-        </Link>
-      </section>
+      {featured && (
+        <section className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+          <Reveal>
+            <Link
+              to={`/blog/${featured.slug}`}
+              className="group block rounded-[var(--radius-card)] border border-line bg-[radial-gradient(120%_140%_at_100%_0%,color-mix(in_srgb,var(--c-accent)_10%,transparent),transparent_55%),var(--c-surface)] p-6 sm:p-10 hover:border-muted/40 transition-colors"
+            >
+              <p className="text-sm text-muted">
+                Latest · {formatDate(featured.date)} · {featured.readTime} min
+              </p>
+              <h2 className="mt-3 text-2xl sm:text-[34px] font-semibold tracking-tight leading-tight max-w-[28ch] group-hover:text-accent transition-colors">
+                {featured.title}
+              </h2>
+              <p className="mt-4 text-muted leading-relaxed max-w-[64ch]">{featured.excerpt}</p>
+              <span className="mt-6 inline-flex items-center gap-1 text-sm font-medium text-fg">
+                Read it
+                <Icon name="arrow_forward" className="text-[18px] transition-transform group-hover:translate-x-0.5" />
+              </span>
+            </Link>
+          </Reveal>
+        </section>
+      )}
 
-      {/* Post grid */}
-      <section>
-        <div className="mx-auto max-w-5xl px-6 py-12">
-          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {posts.map((p) => (
-              <Link
-                key={p.slug}
-                to={`/blog/${p.slug}`}
-                className="group rounded-[16px] border border-[#1A1A1A] bg-[#0D0D0D] p-6 transition-colors hover:border-[#22C55E]"
-              >
-                <article>
-                  <div className="flex flex-wrap gap-2">
-                    {p.tags.slice(0, 2).map((t) => (
-                      <span
-                        key={t}
-                        className="rounded-full border border-[#1A1A1A] px-2.5 py-0.5 text-xs text-[#737373]"
-                      >
-                        {t}
-                      </span>
-                    ))}
-                  </div>
-                  <h2 className="mt-4 text-lg font-semibold leading-snug group-hover:text-[#22C55E]">
-                    {p.title}
-                  </h2>
-                  <p className="mt-2 line-clamp-3 text-sm text-[#737373]">{p.excerpt}</p>
-                  <p className="mt-4 text-xs text-[#737373]">
-                    {new Date(p.date).toLocaleDateString('en-US', {
-                      month: 'short',
-                      day: 'numeric',
-                      year: 'numeric',
-                    })}{' '}
-                    · {p.readTime} min read
-                  </p>
-                </article>
+      <section className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-14 sm:py-20">
+        <ul className="divide-y divide-line border-y border-line">
+          {rest.map((p, i) => (
+            <Reveal as="li" key={p.slug} delay={i * 0.03}>
+              <Link to={`/blog/${p.slug}`} className="group grid sm:grid-cols-[9rem_1fr_auto] gap-2 sm:gap-8 py-7 items-baseline">
+                <time dateTime={p.date} className="text-sm text-muted tabular">
+                  {formatDate(p.date)}
+                </time>
+                <div className="min-w-0">
+                  <h2 className="text-lg font-semibold tracking-tight group-hover:text-accent transition-colors">{p.title}</h2>
+                  <p className="mt-1.5 text-sm text-muted leading-relaxed line-clamp-2 max-w-[70ch]">{p.excerpt}</p>
+                </div>
+                <span className="hidden sm:inline text-sm text-muted tabular">{p.readTime} min</span>
               </Link>
-            ))}
-          </div>
-        </div>
+            </Reveal>
+          ))}
+        </ul>
       </section>
-    </div>
-  );
+    </PublicLayout>
+  )
 }

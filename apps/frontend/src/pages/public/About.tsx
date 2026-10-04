@@ -1,250 +1,148 @@
 // FILE: src/pages/public/About.tsx
-// ROUTE: /about (public)
+// ROUTE: /about
 
-import { Link } from 'react-router-dom';
-import SEO, { SITE_URL, SITE_NAME } from '../../components/SEO';
-import Logo from '../../components/ui/Logo';
+import SEO, { SITE_URL, SITE_NAME } from '../../components/SEO'
+import PublicLayout, { CONTACT_EMAIL } from '../../components/layout/PublicLayout'
+import { Reveal } from '../../components/motion/Reveal'
+import { ButtonLink, Icon } from '../../components/ui'
+
+const SOURCES = [
+  { icon: 'newspaper', name: 'News', desc: 'Coverage from the last 30 days: funding, layoffs, leadership changes, launches.' },
+  { icon: 'code', name: 'Public code', desc: 'Repository activity, commit recency and the languages a team actually writes.' },
+  { icon: 'event_repeat', name: 'Job search results', desc: 'Where and when the same role has been posted, so reposting patterns are visible.' },
+  { icon: 'reviews', name: 'Member reviews', desc: 'Moderated reviews labelled by the writer’s relationship to the company.' },
+]
 
 const FAQS = [
   {
-    q: 'What is SafeApply.AI?',
-    a: 'SafeApply.AI is a job search intelligence platform. It aggregates publicly available data about companies — news, engineering activity, hiring signals, and anonymous employee reviews — into a single cited report, so you can research a company before you apply instead of relying on a polished careers page.',
+    q: 'Where does the data come from?',
+    a: 'Public sources only: news coverage from the last 30 days, public code repositories, and job search results. Reviews come from SafeApply members and are moderated before they appear. Every item in a report links to where it came from.',
   },
   {
-    q: 'Where does SafeApply.AI\'s data come from?',
-    a: 'Every report is built from public sources: company news from the last 90 days, GitHub engineering activity, search results used for ghost-job detection, and a moderated database of anonymous reviews submitted by users. Each data point in a report links directly to its source. We do not scrape private or restricted data, and we never present opinion as fact.',
+    q: 'Is it free?',
+    a: 'Yes, to start. Without an account you can check one job post. A free account gets 3 company reports, 3 CV matches and 3 tracked applications, and writing reviews is unlimited. A paid complete setup is coming; tell us if you would pay for it.',
   },
   {
-    q: 'Is SafeApply.AI free?',
-    a: 'Yes. SafeApply.AI currently operates on a free model with no paywall. Paid plans may be introduced later for heavier usage, but company research, CV matching, application tracking, and review access are free today.',
+    q: 'Do you give companies a score?',
+    a: 'No. A single number hides the reasons behind it. You see the findings and their sources, and you make the call.',
   },
   {
-    q: 'How is SafeApply.AI different from Glassdoor or LinkedIn?',
-    a: 'Glassdoor shows reviews; LinkedIn shows people. SafeApply.AI shows evidence. Instead of one signal, each report cross-references news, engineering activity, and hiring patterns, and every claim carries a citation to its public source. The platform gives you raw cited data — never a verdict — so the decision stays yours.',
+    q: 'Are reviews anonymous?',
+    a: 'Yes. Reviewer identity is never shown publicly. Reviews need at least 100 characters and are labelled current employee, former employee, interviewed here, or knows someone there.',
   },
   {
-    q: 'Are anonymous reviews really anonymous?',
-    a: 'Yes. Reviews are stored without any public reviewer identity — review listings never expose who wrote them. Reviews are moderated for authenticity, must be at least 100 characters, and are labeled by the reviewer\'s relationship to the company (current employee, former employee, applicant, or knows someone) so you can weigh them appropriately.',
+    q: 'Can it guarantee I get hired?',
+    a: 'No, and be wary of anything that claims to. It helps you spend your effort on the right companies and present your CV in the language each job uses.',
   },
-  {
-    q: 'How does the CV matching work?',
-    a: 'Paste a job description or upload your CV as a PDF/DOCX. SafeApply.AI extracts the skills, requirements, and keywords from the job description, compares them against your CV, and returns a match score, the specific skills you are missing, ATS formatting warnings, and AI-suggested rewrites for weak bullet points.',
-  },
-  {
-    q: 'Does SafeApply.AI guarantee I\'ll get hired?',
-    a: 'No — and be skeptical of any tool that claims to. SafeApply.AI gives you better information: whether a posting is real, what the company\'s last 90 days looked like, how your CV scores against the role, and what employees actually say. What you do with that information is up to you.',
-  },
-];
-
-const FAQ_JSONLD = {
-  '@context': 'https://schema.org',
-  '@type': 'FAQPage',
-  mainEntity: FAQS.map((f) => ({
-    '@type': 'Question',
-    name: f.q,
-    acceptedAnswer: { '@type': 'Answer', text: f.a },
-  })),
-};
-
-const ORG_JSONLD = {
-  '@context': 'https://schema.org',
-  '@type': 'Organization',
-  name: SITE_NAME,
-  url: SITE_URL,
-  logo: `${SITE_URL}/logo.svg`,
-  description:
-    'SafeApply.AI aggregates cited public data — news, GitHub activity, hiring signals, and anonymous reviews — so job seekers can research companies, match their CV to job descriptions, track applications, and decide for themselves.',
-  sameAs: [],
-};
+]
 
 export default function About() {
   return (
-    <div className="min-h-screen bg-black text-white">
+    <PublicLayout>
       <SEO
-        title="About SafeApply.AI — Cited Company Research for Job Seekers"
-        description="SafeApply.AI aggregates news, GitHub activity, hiring signals, and anonymous employee reviews into cited company reports — with CV matching, application tracking, and zero opinions."
+        title="About | SafeApply.AI"
+        description="SafeApply.AI pulls public information about employers into one report with every source linked, plus CV matching and application tracking."
         path="/about"
-        jsonLd={[ORG_JSONLD, FAQ_JSONLD]}
+        jsonLd={[
+          {
+            '@context': 'https://schema.org',
+            '@type': 'Organization',
+            name: SITE_NAME,
+            url: SITE_URL,
+            logo: `${SITE_URL}/logo.svg`,
+          },
+          {
+            '@context': 'https://schema.org',
+            '@type': 'FAQPage',
+            mainEntity: FAQS.map((f) => ({ '@type': 'Question', name: f.q, acceptedAnswer: { '@type': 'Answer', text: f.a } })),
+          },
+        ]}
       />
 
-      {/* Header — logo left, back to website right */}
-      <header className="w-full max-w-[80rem] mx-auto px-6 py-5 flex items-center justify-between">
-        <Link to="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
-          <Logo className="h-8 w-auto" />
-        </Link>
-        <Link
-          to="/"
-          className="flex items-center gap-1 text-[#737373] hover:text-white transition-colors text-xs font-semibold uppercase tracking-wider"
-        >
-          <span className="material-symbols-outlined text-[16px]">arrow_back</span>
-          Back to website
-        </Link>
-      </header>
-
-      {/* Hero */}
-      <section className="border-b border-[#1A1A1A]">
-        <div className="mx-auto max-w-4xl px-6 py-20 text-center">
-          <p className="mb-4 text-sm font-medium uppercase tracking-widest text-[#22C55E]">
-            About {SITE_NAME}
-          </p>
-          <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
-            Job seekers deserve the same intelligence that companies have about them
+      <section className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-16 sm:pt-24 pb-16">
+        <Reveal>
+          <h1 className="text-4xl sm:text-5xl lg:text-[56px] font-semibold tracking-[-0.03em] leading-[1.05] max-w-[18ch]">
+            Employers check you. Now you can check them.
           </h1>
-          <p className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-[#737373]">
-            Employers run background checks, reference calls, and assessment batteries on you.
-            SafeApply.AI levels the field: a cited intelligence report on any company —
-            news, engineering activity, hiring signals, and anonymous reviews — so you decide
-            with evidence, not vibes.
+          <p className="mt-6 text-lg text-muted leading-relaxed max-w-[58ch]">
+            Companies run background checks, call references and test candidates. Candidates mostly get a careers page. SafeApply puts the public record about an
+            employer in one place, so you can decide where your time goes.
           </p>
-        </div>
+        </Reveal>
       </section>
 
-      {/* Mission */}
-      <section className="border-b border-[#1A1A1A]">
-        <div className="mx-auto grid max-w-5xl gap-10 px-6 py-16 sm:grid-cols-2">
-          <div>
-            <h2 className="text-2xl font-semibold">Our mission</h2>
-            <p className="mt-4 leading-relaxed text-[#737373]">
-              Every year, millions of candidates apply to companies they have not researched —
-              and waste weeks on ghost jobs, dying products, and cultures that would have been
-              visible from a 90-day news search. We think the single highest-leverage skill in
-              a job search is due diligence, and it should take minutes, not weekends.
+      <section className="border-t border-line">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-16 sm:py-20 grid md:grid-cols-2 gap-10 md:gap-16">
+          <Reveal>
+            <h2 className="text-2xl font-semibold tracking-tight">Why</h2>
+            <p className="mt-4 text-muted leading-relaxed">
+              People lose weeks to postings that were never going to hire, and to teams that changed direction months before the ad went up. Most of that was visible
+              in public. It just took an afternoon to find. We think it should take a minute.
             </p>
-          </div>
-          <div>
-            <h2 className="text-2xl font-semibold">Our method</h2>
-            <p className="mt-4 leading-relaxed text-[#737373]">
-              No scores. No verdicts. No "this company is a 7.4." Every SafeApply.AI report shows
-              raw, cited data from public sources — with a link for every claim — because the
-              candidate, not an algorithm, should be the one making the call.
+          </Reveal>
+          <Reveal delay={0.06}>
+            <h2 className="text-2xl font-semibold tracking-tight">How we work</h2>
+            <p className="mt-4 text-muted leading-relaxed">
+              No scores and no verdicts. We show what we found and link to where we found it. If a source is unavailable we say so instead of guessing.
             </p>
-          </div>
+          </Reveal>
         </div>
       </section>
 
-      {/* How it works */}
-      <section className="border-b border-[#1A1A1A]">
-        <div className="mx-auto max-w-5xl px-6 py-16">
-          <h2 className="text-center text-3xl font-semibold">How it works</h2>
-          <div className="mt-12 grid gap-6 sm:grid-cols-3">
-            {[
-              {
-                icon: 'description',
-                title: 'Paste a job description',
-                text: 'Drop in the JD and company name. We extract the skills, seniority signals, and requirements the posting is really asking for.',
-              },
-              {
-                icon: 'travel_explore',
-                title: 'Get a cited report',
-                text: 'News from the last 90 days, GitHub engineering activity, ghost-posting signals, and aggregated anonymous reviews — each claim linked to its source.',
-              },
-              {
-                icon: 'fact_check',
-                title: 'Decide for yourself',
-                text: 'We never stamp a verdict on a company. The report is evidence; the decision is yours. That is the whole point.',
-              },
-            ].map((s) => (
-              <div key={s.title} className="rounded-[16px] border border-[#1A1A1A] bg-[#0D0D0D] p-6">
-                <span className="material-symbols-outlined text-3xl text-[#22C55E]">{s.icon}</span>
-                <h3 className="mt-4 text-lg font-semibold">{s.title}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-[#737373]">{s.text}</p>
-              </div>
+      <section className="border-t border-line">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-16 sm:py-20">
+          <Reveal>
+            <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight">Where the information comes from</h2>
+          </Reveal>
+          <div className="mt-10 grid sm:grid-cols-2 gap-px bg-line border border-line rounded-[var(--radius-card)] overflow-hidden">
+            {SOURCES.map((s, i) => (
+              <Reveal key={s.name} delay={i * 0.04} className="bg-ink p-6 sm:p-8 flex gap-4">
+                <Icon name={s.icon} className="text-[22px] text-accent shrink-0 mt-0.5" />
+                <div>
+                  <h3 className="font-semibold">{s.name}</h3>
+                  <p className="mt-1.5 text-sm text-muted leading-relaxed">{s.desc}</p>
+                </div>
+              </Reveal>
             ))}
           </div>
         </div>
       </section>
 
-      {/* Data sources */}
-      <section className="border-b border-[#1A1A1A]">
-        <div className="mx-auto max-w-5xl px-6 py-16">
-          <h2 className="text-center text-3xl font-semibold">Where the data comes from</h2>
-          <p className="mx-auto mt-4 max-w-2xl text-center text-[#737373]">
-            Every input is public, cited, and linkable. No scraped private data. No black boxes.
-          </p>
-          <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {[
-              { icon: 'newspaper', name: 'News', desc: 'The last 90 days of company news: funding, layoffs, leadership, lawsuits.' },
-              { icon: 'code', name: 'GitHub', desc: 'Public engineering activity: commit recency, real tech stacks, open-source culture.' },
-              { icon: 'search', name: 'Search signals', desc: 'Repost patterns and recruiter overlap used to detect ghost job postings.' },
-              { icon: 'reviews', name: 'Anonymous reviews', desc: 'Moderated, relationship-labeled reviews from employees and applicants.' },
-            ].map((s) => (
-              <div key={s.name} className="rounded-[16px] border border-[#1A1A1A] bg-[#0D0D0D] p-5">
-                <span className="material-symbols-outlined text-2xl text-[#22C55E]">{s.icon}</span>
-                <h3 className="mt-3 font-semibold">{s.name}</h3>
-                <p className="mt-1 text-sm text-[#737373]">{s.desc}</p>
-              </div>
+      <section className="border-t border-line">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-16 sm:py-20 grid lg:grid-cols-[0.8fr_1.2fr] gap-10 lg:gap-16">
+          <Reveal>
+            <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight">Questions</h2>
+            <p className="mt-3 text-muted">
+              Something else?{' '}
+              <a href={`mailto:${CONTACT_EMAIL}`} className="text-fg underline underline-offset-4 hover:text-accent">
+                {CONTACT_EMAIL}
+              </a>
+            </p>
+          </Reveal>
+          <dl className="flex flex-col divide-y divide-line">
+            {FAQS.map((f, i) => (
+              <Reveal key={f.q} delay={i * 0.03} className="py-6 first:pt-0">
+                <dt className="font-semibold">{f.q}</dt>
+                <dd className="mt-2 text-muted leading-relaxed">{f.a}</dd>
+              </Reveal>
             ))}
-          </div>
+          </dl>
         </div>
       </section>
 
-      {/* Beyond reports */}
-      <section className="border-b border-[#1A1A1A]">
-        <div className="mx-auto max-w-5xl px-6 py-16">
-          <h2 className="text-center text-3xl font-semibold">More than reports</h2>
-          <div className="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-            {[
-              { title: 'CV Match', desc: 'Score your CV against any job description. See missing skills, ATS warnings, and AI rewrites of weak bullets.' },
-              { title: 'CV Builder', desc: 'Build an ATS-approved CV with AI-generated summaries and export to PDF, DOCX, or TXT.' },
-              { title: 'Application Tracker', desc: 'Kanban + list tracking with status timelines, communication logs, and honest analytics.' },
-              { title: 'Anonymous Reviews', desc: 'Read and write relationship-labeled company reviews that never expose reviewer identity.' },
-            ].map((f) => (
-              <div key={f.title} className="rounded-[16px] border border-[#1A1A1A] bg-[#0D0D0D] p-5">
-                <h3 className="font-semibold text-[#22C55E]">{f.title}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-[#737373]">{f.desc}</p>
-              </div>
-            ))}
+      <section className="border-t border-line">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-16 sm:py-20 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6">
+          <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight max-w-[22ch]">Run your first report in under a minute.</h2>
+          <div className="flex flex-wrap gap-3">
+            <ButtonLink to="/signup" size="lg" iconRight="arrow_forward">
+              Start free
+            </ButtonLink>
+            <ButtonLink to="/companies" size="lg" variant="secondary">
+              Browse reviews
+            </ButtonLink>
           </div>
         </div>
       </section>
-
-      {/* FAQ */}
-      <section className="border-b border-[#1A1A1A]">
-        <div className="mx-auto max-w-3xl px-6 py-16">
-          <h2 className="text-center text-3xl font-semibold">Frequently asked questions</h2>
-          <div className="mt-10 space-y-3">
-            {FAQS.map((f) => (
-              <details
-                key={f.q}
-                className="group rounded-[16px] border border-[#1A1A1A] bg-[#0D0D0D] px-5 py-4"
-              >
-                <summary className="flex cursor-pointer list-none items-center justify-between font-medium">
-                  {f.q}
-                  <span className="material-symbols-outlined text-[#737373] transition-transform group-open:rotate-45">
-                    add
-                  </span>
-                </summary>
-                <p className="mt-3 text-sm leading-relaxed text-[#737373]">{f.a}</p>
-              </details>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* CTA */}
-      <section>
-        <div className="mx-auto max-w-3xl px-6 py-20 text-center">
-          <h2 className="text-3xl font-semibold">Research before you apply</h2>
-          <p className="mx-auto mt-4 max-w-xl text-[#737373]">
-            Paste one job description and see what a cited company report looks like.
-            Free, no credit card, no verdicts.
-          </p>
-          <div className="mt-8 flex justify-center gap-4">
-            <Link
-              to="/signup"
-              className="rounded-lg bg-[#22C55E] px-6 py-3 font-medium text-black transition-colors hover:bg-[#16A34A]"
-            >
-              Get started free
-            </Link>
-            <Link
-              to="/companies"
-              className="rounded-lg border border-[#1A1A1A] px-6 py-3 font-medium text-white transition-colors hover:border-[#22C55E]"
-            >
-              Browse companies
-            </Link>
-          </div>
-        </div>
-      </section>
-    </div>
-  );
+    </PublicLayout>
+  )
 }

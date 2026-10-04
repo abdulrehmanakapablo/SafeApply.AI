@@ -11,8 +11,10 @@ export const createApplicationSchema = Joi.object({
     'any.required': 'Application date is required',
     'string.isoDate': 'Invalid date format',
   }),
-  job_link: Joi.string().trim().uri().optional().allow('').messages({
-    'string.uri': 'Please enter a valid URL',
+  // http/https only: Joi's plain .uri() also accepts javascript: and data:
+  job_link: Joi.string().trim().max(2000).uri({ scheme: ['http', 'https'] }).optional().allow('').messages({
+    'string.uri': 'Please enter a valid http(s) link',
+    'string.uriCustomScheme': 'Please enter a valid http(s) link',
   }),
   // Integer bounds — prevents overflow attacks
   salary_min: Joi.number().integer().min(0).max(10000000).optional(),
@@ -29,7 +31,7 @@ export const updateApplicationSchema = Joi.object({
   company_name: Joi.string().trim().min(1).max(200).optional(),
   job_title: Joi.string().trim().min(1).max(200).optional(),
   date_applied: Joi.string().isoDate().optional(),
-  job_link: Joi.string().trim().uri().optional().allow(''),
+  job_link: Joi.string().trim().max(2000).uri({ scheme: ['http', 'https'] }).optional().allow(''),
   salary_min: Joi.number().integer().min(0).max(10000000).optional(),
   salary_max: Joi.number().integer().min(0).max(10000000).optional(),
   location: Joi.string().trim().max(200).optional().allow(''),

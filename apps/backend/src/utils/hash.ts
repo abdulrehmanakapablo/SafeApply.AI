@@ -1,38 +1,37 @@
 // ============================================================
 // FILE: apps/backend/src/utils/hash.ts
-// PURPOSE: bcrypt helpers for password hashing and comparison
-// 12 salt rounds — strong enough for security, fast enough for UX
-// Never store plain text passwords anywhere
+// PURPOSE: Password + token hashing.
 // ============================================================
 
 import bcrypt from 'bcrypt'
+import crypto from 'crypto'
 
 const SALT_ROUNDS = 12
 
-// Hash a plain text password before storing in database
+// Pre-computed hash used to burn the same CPU time when an email doesn't
+// exist, so response timing can't reveal which emails have accounts.
+const DUMMY_HASH = bcrypt.hashSync('safeapply-timing-equaliser', SALT_ROUNDS)
+
 export async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, SALT_ROUNDS)
 }
 
-// Compare a plain text password against a stored hash
-// Returns true if they match, false otherwise
-export async function comparePassword(
-  password: string,
-  hash: string
-): Promise<boolean> {
-  return bcrypt.compare(password, hash)
+export async function comparePassword(plain: string, hash: string): Promise<boolean> {
+  return bcrypt.compare(plain, hash)
 }
 
-// Hash a refresh token before storing in database
-// Same function as password hash but named separately for clarity
+export async function burnPasswordCheck(plain: string): Promise<void> {
+  await bcrypt.compare(plain, DUMMY_HASH)
+}
+
 export async function hashToken(token: string): Promise<string> {
-  return bcrypt.hash(token, SALT_ROUNDS)
+  return crypto.createHash('sha256').update(token).digest('hex')
 }
 
-// Compare a refresh token against its stored hash
-export async function compareToken(
-  token: string,
-  hash: string
-): Promise<boolean> {
-  return bcrypt.compare(token, hash)
+export async function compareToken(token: string, hash: string): Promise<boolean> {
+  const a = Buffer.from(await hashToken(token))
+  const b = Buffer.from(hash)
+  // timingSafeEqual throws on length mismatch; a malformed stored hash
+  // must be a clean "no", not a 500.
+  return a.length === b.length && crypto.timingSafeEqual(a, b)
 }

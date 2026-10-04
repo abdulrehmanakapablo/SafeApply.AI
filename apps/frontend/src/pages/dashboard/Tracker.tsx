@@ -1,1352 +1,562 @@
 // FILE: src/pages/dashboard/Tracker.tsx
-// ROUTE: /dashboard/tracker (auth required)
-// BACKEND: GET /api/tracker, POST /api/tracker, PATCH /api/tracker/:id, DELETE /api/tracker/:id
-// PURPOSE: Kanban + list view of all job applications with status drag-drop.
-// SECURITY:
-//   - No dangerouslySetInnerHTML — all data auto-escaped by React.
-//   - No inline event handlers — all handlers are typed functions.
-//   - Delete is ownership-checked on the backend (user_id = req.user.userId).
-//   - All inputs validated + trimmed before sending to backend.
+// ROUTE: /dashboard/tracker
+// BACKEND: GET/POST /api/tracker, PATCH/DELETE /api/tracker/:id
+// PURPOSE: Board + list of applications. Drag between columns, or use the
+//          status menu on each card (keyboard and touch friendly).
 
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { Link } from 'react-router-dom'
+import toast from 'react-hot-toast'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import SEO from '../../components/SEO'
+import ApplicationForm from '../../components/tracker/ApplicationForm'
+import { createApplication, deleteApplication, getApplications, updateApplication, applicationHref, type Application, type ApplicationStatus } from '../../api/tracker'
 import {
-  getApplications,
-  createApplication,
-  updateApplication,
-  deleteApplication,
-  type Application,
-  type ApplicationStatus,
-} from '../../api/tracker'
+  APPLICATION_STATUSES,
+  Alert,
+  Button,
+  ButtonLink,
+  Card,
+  ConfirmDialog,
+  EmptyState,
+  Icon,
+  PageContainer,
+  PageHeader,
+  STATUS_META,
+  Skeleton,
+  StatusBadge,
+  Tabs,
+  cn,
+  formatDate,
+  relativeDays,
+} from '../../components/ui'
+import { apiError } from '../../lib/axios'
 
-// ─── Status config ──────────────────────────────────────
-interface StatusMeta {
-  key: ApplicationStatus
-  label: string
-  dotClass: string
-  dotHex: string
+const MAX_PAGES = 10
+type View = 'board' | 'list'
+
+const DOT: Record<ApplicationStatus, string> = {
+  saved: 'bg-muted',
+  applied: 'bg-fg',
+  screening: 'bg-accent/60',
+  interviewing: 'bg-accent',
+  offered: 'bg-accent',
+  rejected: 'bg-danger',
+  ghosted: 'bg-muted/50',
 }
 
-const STATUSES: StatusMeta[] = [
-  { key: 'saved',        label: 'Saved',        dotClass: 'bg-[#737373]', dotHex: '#737373' },
-  { key: 'applied',      label: 'Applied',      dotClass: 'bg-[#22c55e]', dotHex: '#22c55e' },
-  { key: 'screening',    label: 'Screening',    dotClass: 'bg-[#22c55e]', dotHex: '#22c55e' },
-  { key: 'interviewing', label: 'Interviewing', dotClass: 'bg-[#22c55e]', dotHex: '#22c55e' },
-  { key: 'offered',      label: 'Offered',      dotClass: 'bg-[#22c55e]', dotHex: '#22c55e' },
-  { key: 'rejected',     label: 'Rejected',     dotClass: 'bg-[#EF4444]', dotHex: '#EF4444' },
-  { key: 'ghosted',      label: 'Ghosted',      dotClass: 'bg-[#737373]', dotHex: '#737373' },
-]
-
-const STATUS_LABEL: Record<ApplicationStatus, string> = {
-  saved: 'Saved',
-  applied: 'Applied',
-  screening: 'Screening',
-  interviewing: 'Interviewing',
-  offered: 'Offered',
-  rejected: 'Rejected',
-  ghosted: 'Ghosted',
+function salary(min?: number | null, max?: number | null): string | null {
+  if (!min && !max) return null
+  const f = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n))
+  if (min && max && min !== max) return `${f(min)} to ${f(max)}`
+  return f((min || max) as number)
 }
 
-// ─── Demo fallback (pilot mode) ─────────────────────────
-interface DemoApp {
-  id: string
-  company_name: string
-  job_title: string
-  status: ApplicationStatus
-  date_applied: string
-  salary_min?: number | null
-  salary_max?: number | null
-  location?: string | null
-  job_link?: string | null
-  match_score?: number | null
-  source_tag?: string
-  status_note?: string
-  icon: string
-}
-
-const DEMO_APPS: DemoApp[] = []
-
-// ─── Helpers ────────────────────────────────────────────
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-  })
-}
-
-function relativeDate(iso: string): string {
-  const then = new Date(iso).getTime()
-  const now = Date.now()
-  const days = Math.max(0, Math.floor((now - then) / 86_400_000))
-  if (days === 0) return 'today'
-  if (days === 1) return '1d ago'
-  if (days < 7) return `${days}d ago`
-  if (days < 30) return `${Math.floor(days / 7)}w ago`
-  if (days < 365) return `${Math.floor(days / 30)}mo ago`
-  return `${Math.floor(days / 365)}y ago`
-}
-
-function formatSalaryRange(min?: number | null, max?: number | null): string {
-  if (!min && !max) return '—'
-  const fmt = (n: number) =>
-    `$${n >= 1000 ? `${Math.round(n / 1000)}k` : n}`
-  if (min && max && min !== max) return `${fmt(min)} - ${fmt(max)}`
-  if (min) return fmt(min)
-  return fmt(max as number)
-}
-
-function toDemoApp(app: Application): DemoApp {
-  return {
-    id: app.id,
-    company_name: app.company_name,
-    job_title: app.job_title,
-    status: app.status,
-    date_applied: app.date_applied || app.created_at.slice(0, 10),
-    salary_min: app.salary_min,
-    salary_max: app.salary_max,
-    location: app.location,
-    job_link: app.job_link,
-    match_score: app.match_score,
-    source_tag: app.location || 'Tracked',
-    status_note: relativeDate(app.date_applied || app.created_at),
-    icon: 'work',
+function readView(): View {
+  try {
+    return localStorage.getItem('sa_tracker_view') === 'list' ? 'list' : 'board'
+  } catch {
+    return 'board'
   }
 }
 
-// ─── Match badge color ──────────────────────────────────
-function matchBadgeClass(score?: number | null): string {
-  if (!score) return 'bg-[#1A1A1A] text-[#737373] border-[#1A1A1A]'
-  if (score >= 90)
-    return 'bg-[#22c55e]/15 text-[#22c55e] border-[#22c55e]/30'
-  if (score >= 70)
-    return 'bg-[#EAB308]/15 text-[#EAB308] border-[#EAB308]/30'
-  return 'bg-[#EF4444]/15 text-[#EF4444] border-[#EF4444]/30'
-}
+export default function Tracker() {
+  const reduce = useReducedMotion()
+  const [apps, setApps] = useState<Application[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [truncated, setTruncated] = useState(false)
+  const [view, setViewState] = useState<View>(readView)
+  const [query, setQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState<ApplicationStatus | 'all'>('all')
+  const [addOpen, setAddOpen] = useState(false)
+  const [pending, setPending] = useState<Application | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [dragId, setDragId] = useState<string | null>(null)
+  const [overCol, setOverCol] = useState<ApplicationStatus | null>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
+  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches)
 
-// ─── Metric ribbon ──────────────────────────────────────
-interface Metrics {
-  highMatch: number
-  activePipeline: number
-  offers: number
-  salaryMean: number
-  avgResponseDays: number
-  auditIntegrity: number
-  stalled: number
-  total: number
-}
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 767px)')
+    const on = () => setNarrow(mq.matches)
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
 
-function computeMetrics(apps: DemoApp[]): Metrics {
-  const total = apps.length
-  const highMatch = apps.filter((a) => (a.match_score ?? 0) >= 90).length
-  const activePipeline = apps.filter((a) =>
-    ['applied', 'screening', 'interviewing'].includes(a.status)
-  ).length
-  const offers = apps.filter((a) => a.status === 'offered').length
-  const stalled = apps.filter((a) => a.status === 'ghosted').length
+  // Phones get the list: a 7-column board doesn't fit and drag needs a mouse.
+  const effectiveView: View = narrow ? 'list' : view
 
-  const salaryApps = apps.filter((a) => a.salary_min && a.salary_max)
-  const salaryMean = salaryApps.length
-    ? Math.round(
-        salaryApps.reduce(
-          (sum, a) => sum + ((a.salary_min || 0) + (a.salary_max || 0)) / 2,
-          0
-        ) / salaryApps.length
-      )
-    : 0
+  const setView = (v: View) => {
+    setViewState(v)
+    try {
+      localStorage.setItem('sa_tracker_view', v)
+    } catch {
+      /* ignore */
+    }
+  }
 
-  const responseApps = apps.filter(
-    (a) => !['saved', 'ghosted'].includes(a.status)
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const first = await getApplications({ page: 1 })
+      let all = Array.isArray(first.data) ? first.data : []
+      const pages = Math.min(first.total_pages || 1, MAX_PAGES)
+      if (pages > 1) {
+        const rest = await Promise.all(Array.from({ length: pages - 1 }, (_, i) => getApplications({ page: i + 2 })))
+        rest.forEach((r) => (all = all.concat(Array.isArray(r.data) ? r.data : [])))
+      }
+      setTruncated((first.total_pages || 1) > MAX_PAGES)
+      setApps(all)
+    } catch (e) {
+      setError(apiError(e, 'Couldn’t load your applications.'))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement
+      if (e.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName) && !t.isContentEditable) {
+        e.preventDefault()
+        searchRef.current?.focus()
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [])
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return apps.filter(
+      (a) =>
+        (statusFilter === 'all' || a.status === statusFilter) &&
+        (!q || a.company_name.toLowerCase().includes(q) || a.job_title.toLowerCase().includes(q) || (a.location || '').toLowerCase().includes(q)),
+    )
+  }, [apps, query, statusFilter])
+
+  const counts = useMemo(() => {
+    const c = Object.fromEntries(APPLICATION_STATUSES.map((s) => [s, 0])) as Record<ApplicationStatus, number>
+    apps.forEach((a) => (c[a.status] = (c[a.status] || 0) + 1))
+    return c
+  }, [apps])
+
+  const active = counts.applied + counts.screening + counts.interviewing
+  const responded = counts.screening + counts.interviewing + counts.offered + counts.rejected
+  const sent = apps.length - counts.saved
+
+  async function moveTo(app: Application, status: ApplicationStatus) {
+    if (app.status === status) return
+    const prev = app.status
+    setApps((p) => p.map((a) => (a.id === app.id ? { ...a, status } : a)))
+    try {
+      const res = await updateApplication(app.id, { status })
+      if (!res.success) throw new Error(res.error)
+      toast.success(`${app.company_name} moved to ${STATUS_META[status].label}`)
+    } catch (e) {
+      setApps((p) => p.map((a) => (a.id === app.id ? { ...a, status: prev } : a)))
+      toast.error(apiError(e, 'Couldn’t move it. Try again.'))
+    }
+  }
+
+  function onDrop(e: DragEvent, status: ApplicationStatus) {
+    e.preventDefault()
+    const app = apps.find((a) => a.id === (dragId || e.dataTransfer.getData('text/plain')))
+    setDragId(null)
+    setOverCol(null)
+    if (app) void moveTo(app, status)
+  }
+
+  async function confirmDelete() {
+    if (!pending) return
+    setDeleting(true)
+    try {
+      const res = await deleteApplication(pending.id)
+      if (!res.success) throw new Error(res.error)
+      setApps((p) => p.filter((a) => a.id !== pending.id))
+      toast.success('Application deleted')
+      setPending(null)
+    } catch (e) {
+      toast.error(apiError(e, 'Couldn’t delete it.'))
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const empty = !loading && !error && apps.length === 0
+  const noMatches = !loading && apps.length > 0 && filtered.length === 0
+
+  return (
+    <>
+      <SEO title="Applications | SafeApply.AI" description="Track your job applications." path="/dashboard/tracker" noindex />
+      <PageContainer className="max-w-[1500px]">
+        <PageHeader
+          title="Applications"
+          description="Every job you’ve applied to, and where it stands."
+          actions={
+            <>
+              <ButtonLink to="/dashboard/analytics" variant="secondary" icon="insights" className="hidden sm:inline-flex">
+                Analytics
+              </ButtonLink>
+              <Button icon="add" onClick={() => setAddOpen(true)}>
+                Add application
+              </Button>
+            </>
+          }
+        />
+
+        {error && (
+          <Alert title="Couldn’t load applications">
+            {error}{' '}
+            <button type="button" onClick={load} className="underline underline-offset-2">
+              Try again
+            </button>
+          </Alert>
+        )}
+        {truncated && <Alert tone="warn">Showing your {MAX_PAGES * 20} most recent applications.</Alert>}
+
+        {!empty && (
+          <dl className="grid grid-cols-2 md:grid-cols-4 gap-px bg-line border border-line rounded-[var(--radius-card)] overflow-hidden">
+            {[
+              { label: 'Tracked', value: apps.length },
+              { label: 'In progress', value: active },
+              { label: 'Interviews', value: counts.interviewing + counts.offered },
+              { label: 'Response rate', value: sent ? `${Math.round((responded / sent) * 100)}%` : 'None yet' },
+            ].map((m) => (
+              <div key={m.label} className="bg-surface px-5 py-4">
+                <dt className="text-[13px] text-muted">{m.label}</dt>
+                <dd className="mt-1 text-2xl font-semibold tabular tracking-tight">{loading ? <Skeleton className="h-7 w-12" /> : m.value}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+
+        {!empty && (
+          <div className="flex flex-col md:flex-row md:items-center gap-3">
+            <div className="relative flex-1 max-w-md">
+              <Icon name="search" className="absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-muted pointer-events-none" />
+              <input
+                ref={searchRef}
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search company, title or location"
+                aria-label="Search applications"
+                className="w-full h-10 pl-9 pr-10 rounded-[var(--radius-input)] bg-surface border border-line text-sm placeholder:text-muted/80 focus:outline-none focus:border-accent"
+              />
+              <kbd className="hidden md:block absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-muted border border-line rounded px-1.5">/</kbd>
+            </div>
+            <select
+              aria-label="Filter by status"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as ApplicationStatus | 'all')}
+              className="h-10 px-3 rounded-[var(--radius-input)] bg-surface border border-line text-sm focus:outline-none focus:border-accent"
+            >
+              <option value="all">All statuses</option>
+              {APPLICATION_STATUSES.map((s) => (
+                <option key={s} value={s}>
+                  {STATUS_META[s].label} ({counts[s]})
+                </option>
+              ))}
+            </select>
+            <Tabs
+              label="View"
+              value={view}
+              onChange={setView}
+              items={[
+                { value: 'board', label: 'Board', icon: 'view_kanban' },
+                { value: 'list', label: 'List', icon: 'view_list' },
+              ]}
+              className="hidden md:inline-flex md:ml-auto self-start"
+            />
+          </div>
+        )}
+
+        {loading ? (
+          <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-4 gap-4">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="flex flex-col gap-3">
+                <Skeleton className="h-5 w-24" />
+                <Skeleton className="h-24 w-full rounded-[12px]" />
+                <Skeleton className="h-24 w-full rounded-[12px]" />
+              </div>
+            ))}
+          </div>
+        ) : empty ? (
+          <Card padded={false}>
+            <EmptyState
+              icon="work_history"
+              title="No applications yet"
+              body="Add each job you apply to. You’ll see what’s waiting on a reply, which companies went quiet, and your response rate over time."
+              action={
+                <Button icon="add" onClick={() => setAddOpen(true)}>
+                  Add your first application
+                </Button>
+              }
+            />
+          </Card>
+        ) : noMatches ? (
+          <Card padded={false}>
+            <EmptyState
+              icon="search_off"
+              title="No applications match"
+              body="Try another search or status."
+              action={
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setQuery('')
+                    setStatusFilter('all')
+                  }}
+                >
+                  Clear filters
+                </Button>
+              }
+            />
+          </Card>
+        ) : effectiveView === 'board' ? (
+          <div className="-mx-4 sm:mx-0 px-4 sm:px-0 overflow-x-auto pb-2">
+            <div className="grid grid-flow-col auto-cols-[minmax(232px,1fr)] gap-4">
+              {APPLICATION_STATUSES.filter((s) => statusFilter === 'all' || s === statusFilter).map((status) => {
+                const col = filtered.filter((a) => a.status === status)
+                const isOver = overCol === status && dragId !== null
+                return (
+                  <section
+                    key={status}
+                    aria-label={STATUS_META[status].label}
+                    onDragOver={(e) => {
+                      e.preventDefault()
+                      if (overCol !== status) setOverCol(status)
+                    }}
+                    onDragLeave={(e) => {
+                      if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) setOverCol(null)
+                    }}
+                    onDrop={(e) => onDrop(e, status)}
+                    className={cn(
+                      'flex flex-col gap-3 rounded-[14px] p-2 -m-2 min-h-[200px] transition-colors',
+                      isOver && 'bg-accent/5 outline outline-1 outline-dashed outline-accent/40',
+                    )}
+                  >
+                    <header className="flex items-center gap-2 px-1 h-7">
+                      <span className={cn('w-2 h-2 rounded-full', DOT[status])} aria-hidden />
+                      <h2 className="text-[13px] font-semibold">{STATUS_META[status].label}</h2>
+                      <span className="text-xs text-muted tabular">{col.length}</span>
+                    </header>
+                    <ul className="flex flex-col gap-2">
+                      <AnimatePresence initial={false}>
+                        {col.map((a) => (
+                          <motion.li
+                            key={a.id}
+                            layout={!reduce}
+                            layoutId={reduce ? undefined : `app-${a.id}`}
+                            initial={reduce ? false : { opacity: 0, scale: 0.97 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.97 }}
+                            transition={{ type: 'spring', stiffness: 500, damping: 40 }}
+                          >
+                            <BoardCard app={a} dragging={dragId === a.id} onDragStart={() => setDragId(a.id)} onDragEnd={() => setDragId(null)} onMove={(s) => moveTo(a, s)} onDelete={() => setPending(a)} />
+                          </motion.li>
+                        ))}
+                      </AnimatePresence>
+                    </ul>
+                    {col.length === 0 && <p className="text-xs text-muted/70 px-1 py-6 text-center border border-dashed border-line rounded-[12px]">Drop here</p>}
+                  </section>
+                )
+              })}
+            </div>
+          </div>
+        ) : (
+          <Card padded={false} className="overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-muted border-b border-line">
+                    <th scope="col" className="font-medium px-5 py-3">Company</th>
+                    <th scope="col" className="font-medium px-3 py-3 hidden md:table-cell">Location</th>
+                    <th scope="col" className="font-medium px-3 py-3">Status</th>
+                    <th scope="col" className="font-medium px-3 py-3 hidden sm:table-cell">Applied</th>
+                    <th scope="col" className="font-medium px-3 py-3 hidden lg:table-cell">Salary</th>
+                    <th scope="col" className="px-3 py-3 w-12">
+                      <span className="sr-only">Actions</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line">
+                  {filtered.map((a) => (
+                    <tr key={a.id} className="group hover:bg-line/30 transition-colors">
+                      <td className="px-5 py-3 max-w-[280px]">
+                        <Link to={applicationHref(a)} className="block min-w-0">
+                          <span className="block font-medium truncate group-hover:text-accent transition-colors">{a.company_name}</span>
+                          <span className="block text-xs text-muted truncate">{a.job_title}</span>
+                          <Receipt a={a} />
+                        </Link>
+                      </td>
+                      <td className="px-3 py-3 text-muted hidden md:table-cell truncate max-w-[180px]">{a.location || 'Not set'}</td>
+                      <td className="px-3 py-3">
+                        <StatusBadge status={a.status} />
+                      </td>
+                      <td className="px-3 py-3 text-muted tabular hidden sm:table-cell whitespace-nowrap">{formatDate(a.date_applied)}</td>
+                      <td className="px-3 py-3 text-muted tabular hidden lg:table-cell">{salary(a.salary_min, a.salary_max) ?? 'Not set'}</td>
+                      <td className="px-3 py-3">
+                        <button
+                          type="button"
+                          onClick={() => setPending(a)}
+                          aria-label={`Delete ${a.company_name}`}
+                          className="w-8 h-8 rounded-[8px] flex items-center justify-center text-muted hover:text-danger hover:bg-danger/10 transition-colors sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100"
+                        >
+                          <Icon name="delete" className="text-[18px]" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        )}
+
+        <ApplicationForm
+          open={addOpen}
+          onClose={() => setAddOpen(false)}
+          onSubmit={async (payload) => {
+            try {
+              const res = await createApplication(payload)
+              if (res.success && res.data) {
+                setApps((p) => [res.data as Application, ...p])
+                setAddOpen(false)
+                toast.success('Application added')
+                return null
+              }
+              return res.error || 'Couldn’t add the application.'
+            } catch (e) {
+              return apiError(e, 'Couldn’t add the application.')
+            }
+          }}
+        />
+
+        <ConfirmDialog
+          open={Boolean(pending)}
+          onClose={() => !deleting && setPending(null)}
+          onConfirm={confirmDelete}
+          loading={deleting}
+          title="Delete this application?"
+          body={pending ? `${pending.company_name}, ${pending.job_title}. Its notes and history are deleted too.` : undefined}
+        />
+      </PageContainer>
+    </>
   )
-  const avgResponseDays =
-    responseApps.length > 0 ? Math.round((total / responseApps.length) * 4) : 0
-
-  return {
-    highMatch,
-    activePipeline,
-    offers,
-    salaryMean,
-    avgResponseDays: Math.max(2, Math.min(14, avgResponseDays)),
-    auditIntegrity: 100,
-    stalled,
-    total,
-  }
 }
 
-// ─── Kanban card ────────────────────────────────────────
-interface KanbanCardProps {
-  app: DemoApp
-  onDragStart: (id: string) => void
-  onDragEnd: () => void
-  onDelete: (app: DemoApp) => void
+function BoardCard({
+  app,
+  dragging,
+  onDragStart,
+  onDragEnd,
+  onMove,
+  onDelete,
+}: {
+  app: Application
   dragging: boolean
-}
-
-function KanbanCard({ app, onDragStart, onDragEnd, onDelete, dragging }: KanbanCardProps) {
+  onDragStart: () => void
+  onDragEnd: () => void
+  onMove: (s: ApplicationStatus) => void
+  onDelete: () => void
+}) {
+  const pay = salary(app.salary_min, app.salary_max)
   return (
     <article
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData('text/plain', app.id)
         e.dataTransfer.effectAllowed = 'move'
-        onDragStart(app.id)
+        onDragStart()
       }}
       onDragEnd={onDragEnd}
-      className={`p-3 bg-[#0D0D0D] rounded-lg border border-[#1A1A1A] hover:border-[#22c55e]/40 cursor-grab active:cursor-grabbing transition-all flex flex-col gap-2 group ${
-        dragging ? 'opacity-40 ring-2 ring-[#22c55e]/40' : ''
-      }`}
+      className={cn(
+        'group relative bg-surface border border-line rounded-[12px] p-3.5 flex flex-col gap-2.5 cursor-grab active:cursor-grabbing transition-[border-color,opacity] hover:border-muted/40',
+        dragging && 'opacity-40',
+      )}
     >
-      <div className="flex items-start justify-between gap-2">
-        <Link
-          to={`/dashboard/tracker/${app.id}`}
-          className="font-semibold text-sm text-white truncate hover:text-[#22c55e] transition-colors min-w-0 flex-1"
-        >
-          {app.company_name}
-        </Link>
-        {app.match_score ? (
-          <span
-            className={`px-1.5 py-0.5 rounded-full border font-mono text-[10px] font-bold whitespace-nowrap ${matchBadgeClass(
-              app.match_score
-            )}`}
-          >
-            {app.match_score}%
-          </span>
-        ) : null}
-      </div>
-
-      <p className="text-xs text-[#737373] truncate -mt-1">{app.job_title}</p>
-
-      <div className="flex items-center justify-between text-[11px] text-[#737373] pt-1">
-        <span className="font-mono truncate">
-          {formatSalaryRange(app.salary_min, app.salary_max)}
+      <div className="flex items-start gap-2.5 min-w-0">
+        <span className="w-8 h-8 rounded-[8px] bg-line flex items-center justify-center text-xs font-semibold shrink-0" aria-hidden>
+          {app.company_name.trim().charAt(0).toUpperCase() || '?'}
         </span>
-        <span className="whitespace-nowrap">{relativeDate(app.date_applied)}</span>
-      </div>
-
-      <div className="pt-2 flex items-center justify-between border-t border-[#1A1A1A] gap-2">
-        <span className="px-2 py-0.5 rounded bg-[#1c1b1b] text-[#737373] text-[10px] font-medium truncate max-w-[120px]">
-          {app.source_tag || app.location || 'Tracked'}
-        </span>
-        <div className="flex items-center gap-1 shrink-0">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              onDelete(app)
-            }}
-            aria-label={`Delete ${app.company_name}`}
-            className="opacity-0 group-hover:opacity-100 text-[#737373] hover:text-[#EF4444] transition-all p-0.5"
-          >
-            <span className="material-symbols-outlined text-[14px]">
-              delete
-            </span>
-          </button>
-          <span className="material-symbols-outlined text-[14px] text-[#737373]">
-            {app.icon || 'work'}
-          </span>
+        <div className="min-w-0 flex-1">
+          <Link to={applicationHref(app)} className="block text-sm font-medium truncate hover:text-accent transition-colors after:absolute after:inset-0" draggable={false}>
+            {app.company_name}
+          </Link>
+          <p className="text-xs text-muted truncate">{app.job_title}</p>
+          <Receipt a={app} />
         </div>
+      </div>
+      <div className="flex items-center gap-2 text-xs text-muted min-w-0">
+        <span className="tabular whitespace-nowrap" title={formatDate(app.date_applied)}>
+          {relativeDays(app.date_applied)}
+        </span>
+        {app.location && (
+          <>
+            <span aria-hidden>·</span>
+            <span className="truncate">{app.location}</span>
+          </>
+        )}
+        {pay && (
+          <>
+            <span aria-hidden>·</span>
+            <span className="tabular whitespace-nowrap">{pay}</span>
+          </>
+        )}
+      </div>
+      <div className="relative z-10 flex items-center gap-1 -mb-1 -mx-1">
+        <label className="sr-only" htmlFor={`st-${app.id}`}>
+          Move {app.company_name} to
+        </label>
+        <select
+          id={`st-${app.id}`}
+          value={app.status}
+          onChange={(e) => onMove(e.target.value as ApplicationStatus)}
+          className="h-7 flex-1 min-w-0 px-1.5 rounded-[6px] bg-transparent text-xs text-muted hover:bg-line focus:bg-line focus:outline-none cursor-pointer transition-colors"
+        >
+          {APPLICATION_STATUSES.map((s) => (
+            <option key={s} value={s}>
+              {STATUS_META[s].label}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={onDelete}
+          aria-label={`Delete ${app.company_name}`}
+          className="w-7 h-7 rounded-[6px] flex items-center justify-center text-muted hover:text-danger hover:bg-danger/10 transition-colors sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100"
+        >
+          <Icon name="delete" className="text-[16px]" />
+        </button>
       </div>
     </article>
   )
 }
 
-// ─── Main component ─────────────────────────────────────
-export default function Tracker() {
-  const [apps, setApps] = useState<DemoApp[]>(DEMO_APPS)
-  const [loading, setLoading] = useState(true)
-  const [view, setView] = useState<'kanban' | 'list'>('kanban')
-  const [search, setSearch] = useState('')
-  const [minMatch, setMinMatch] = useState<number>(0)
-  const [filterOpen, setFilterOpen] = useState(false)
-  const [draggingId, setDraggingId] = useState<string | null>(null)
-  const [dragOverStatus, setDragOverStatus] = useState<ApplicationStatus | null>(null)
-
-  const [addOpen, setAddOpen] = useState(false)
-  const [addForm, setAddForm] = useState({
-    company_name: '',
-    job_title: '',
-    date_applied: new Date().toISOString().slice(0, 10),
-    status: 'applied' as ApplicationStatus,
-    location: '',
-    job_link: '',
-    salary_min: '',
-    salary_max: '',
-    notes: '',
-    jd_text: '',
-  })
-  const [addError, setAddError] = useState('')
-  const [adding, setAdding] = useState(false)
-  const [jdEnabled, setJdEnabled] = useState(true)
-
-  const [deleteTarget, setDeleteTarget] = useState<DemoApp | null>(null)
-  const [deleting, setDeleting] = useState(false)
-
-  const [toast, setToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(
-    null
-  )
-
-  const searchRef = useRef<HTMLInputElement>(null)
-  const filterRef = useRef<HTMLDivElement>(null)
-
-  // Auto-dismiss toast
-  useEffect(() => {
-    if (!toast) return
-    const t = setTimeout(() => setToast(null), 3200)
-    return () => clearTimeout(t)
-  }, [toast])
-
-  // Load applications on mount
-  useEffect(() => {
-    let cancelled = false
-    getApplications({ page: 1 })
-      .then((res) => {
-        if (cancelled) return
-        if (res.success && res.data && res.data.length > 0) {
-          setApps(res.data.map(toDemoApp))
-        } else {
-          setApps(DEMO_APPS)
-        }
-      })
-      .catch(() => {
-        if (cancelled) return
-        setApps(DEMO_APPS)
-      })
-      .finally(() => {
-        if (cancelled) return
-        setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  // Close filter dropdown on outside click
-  useEffect(() => {
-    function onClick(e: MouseEvent) {
-      if (filterRef.current && !filterRef.current.contains(e.target as Node)) {
-        setFilterOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', onClick)
-    return () => document.removeEventListener('mousedown', onClick)
-  }, [])
-
-  // Cmd/Ctrl + K focuses search
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault()
-        searchRef.current?.focus()
-      }
-      if (e.key === 'Escape') {
-        if (addOpen) setAddOpen(false)
-        if (deleteTarget) setDeleteTarget(null)
-      }
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [addOpen, deleteTarget])
-
-  // ── Filtered apps ──────────────────────────────────────
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    return apps.filter((a) => {
-      const matchesSearch =
-        !q ||
-        a.company_name.toLowerCase().includes(q) ||
-        a.job_title.toLowerCase().includes(q) ||
-        (a.source_tag || '').toLowerCase().includes(q)
-      const matchesMatch = (a.match_score ?? 0) >= minMatch
-      return matchesSearch && matchesMatch
-    })
-  }, [apps, search, minMatch])
-
-  const metrics = useMemo(() => computeMetrics(apps), [apps])
-
-  // ── Drag / drop ────────────────────────────────────────
-  async function handleDrop(targetStatus: ApplicationStatus) {
-    if (!draggingId) return
-    const app = apps.find((a) => a.id === draggingId)
-    setDragOverStatus(null)
-    setDraggingId(null)
-    if (!app || app.status === targetStatus) return
-
-    const previousStatus = app.status
-    // Optimistic update
-    setApps((prev) =>
-      prev.map((a) => (a.id === app.id ? { ...a, status: targetStatus } : a))
-    )
-
-    try {
-      if (!app.id.startsWith('d')) {
-        await updateApplication(app.id, { status: targetStatus })
-      }
-      setToast({
-        kind: 'ok',
-        text: `Moved ${app.company_name} → ${STATUS_LABEL[targetStatus]}`,
-      })
-    } catch {
-      // Rollback
-      setApps((prev) =>
-        prev.map((a) =>
-          a.id === app.id ? { ...a, status: previousStatus } : a
-        )
-      )
-      setToast({ kind: 'err', text: 'Failed to move — try again.' })
-    }
-  }
-
-  // ── Add application ────────────────────────────────────
-  function resetAddForm() {
-    setAddForm({
-      company_name: '',
-      job_title: '',
-      date_applied: new Date().toISOString().slice(0, 10),
-      status: 'applied',
-      location: '',
-      job_link: '',
-      salary_min: '',
-      salary_max: '',
-      notes: '',
-      jd_text: '',
-    })
-    setAddError('')
-    setJdEnabled(true)
-  }
-
-  async function handleAddSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (adding) return
-
-    const company = addForm.company_name.trim()
-    const role = addForm.job_title.trim()
-    if (!company || company.length < 1) {
-      setAddError('Company name is required.')
-      return
-    }
-    if (!role) {
-      setAddError('Job title is required.')
-      return
-    }
-
-    const salaryMin = addForm.salary_min
-      ? parseInt(addForm.salary_min.replace(/[^0-9]/g, ''), 10)
-      : undefined
-    const salaryMax = addForm.salary_max
-      ? parseInt(addForm.salary_max.replace(/[^0-9]/g, ''), 10)
-      : undefined
-
-    if (salaryMin && salaryMax && salaryMin > salaryMax) {
-      setAddError('Minimum salary must be less than maximum.')
-      return
-    }
-
-    setAdding(true)
-    setAddError('')
-
-    const payload = {
-      company_name: company,
-      job_title: role,
-      date_applied: addForm.date_applied,
-      status: addForm.status,
-      location: addForm.location.trim() || undefined,
-      job_link: addForm.job_link.trim() || undefined,
-      salary_min: salaryMin,
-      salary_max: salaryMax,
-      notes: addForm.notes.trim() || undefined,
-      jd_text: jdEnabled && addForm.jd_text.trim() ? addForm.jd_text.trim() : undefined,
-    }
-
-    try {
-      const res = await createApplication(payload)
-      if (res.success && res.data) {
-        setApps((prev) => [toDemoApp(res.data), ...prev])
-        setToast({ kind: 'ok', text: 'Application added.' })
-        setAddOpen(false)
-        resetAddForm()
-      } else {
-        setAddError(res.error || 'Failed to add application.')
-      }
-    } catch {
-      // Pilot fallback — add locally
-      const localApp: DemoApp = {
-        id: `local-${Date.now()}`,
-        company_name: payload.company_name,
-        job_title: payload.job_title,
-        status: payload.status,
-        date_applied: payload.date_applied,
-        salary_min: payload.salary_min ?? null,
-        salary_max: payload.salary_max ?? null,
-        location: payload.location ?? null,
-        job_link: payload.job_link ?? null,
-        match_score: null,
-        source_tag: payload.location || 'Manual',
-        status_note: 'Just now',
-        icon: 'check_circle',
-      }
-      setApps((prev) => [localApp, ...prev])
-      setToast({ kind: 'ok', text: 'Application added.' })
-      setAddOpen(false)
-      resetAddForm()
-    } finally {
-      setAdding(false)
-    }
-  }
-
-  // ── Delete application ─────────────────────────────────
-  async function handleDelete() {
-    if (!deleteTarget || deleting) return
-    const target = deleteTarget
-    setDeleting(true)
-
-    const previous = apps
-    setApps((prev) => prev.filter((a) => a.id !== target.id))
-    setDeleteTarget(null)
-
-    try {
-      if (!target.id.startsWith('d') && !target.id.startsWith('local')) {
-        await deleteApplication(target.id)
-      }
-      setToast({ kind: 'ok', text: 'Application deleted.' })
-    } catch {
-      setApps(previous)
-      setToast({ kind: 'err', text: 'Delete failed — restored.' })
-    } finally {
-      setDeleting(false)
-    }
-  }
-
-  // ── Columns grouping ───────────────────────────────────
-  const appsByStatus = useMemo(() => {
-    const map: Record<ApplicationStatus, DemoApp[]> = {
-      saved: [],
-      applied: [],
-      screening: [],
-      interviewing: [],
-      offered: [],
-      rejected: [],
-      ghosted: [],
-    }
-    filtered.forEach((a) => {
-      map[a.status].push(a)
-    })
-    return map
-  }, [filtered])
-
-  // ─────────────────────────────────────────────────────
+/** Read receipt line for jobs-board applications. */
+function Receipt({ a }: { a: Application }) {
+  const r = a.receipt
+  if (!r) return null
+  const [icon, text, cls] = r.no_response
+    ? ['hourglass_disabled', 'No reply after 21 days', 'text-warn']
+    : r.first_response_at
+      ? ['reply', 'Company replied', 'text-accent']
+      : r.cv_opened_at
+        ? ['visibility', `CV opened ${relativeDays(r.cv_opened_at)}`, 'text-accent']
+        : ['visibility_off', 'CV not opened yet', 'text-muted']
   return (
-    <>
-      <SEO
-        title="Application Tracker | SafeApply.AI"
-        description="Track every job application across a 7-stage pipeline with drag-and-drop Kanban and list views."
-        path="/dashboard/tracker"
-        noindex
-      />
-
-      <div className="w-full px-4 sm:px-6 py-4 sm:py-6 flex flex-col gap-6 pb-16">
-
-        {/* ── Header ─────────────────────────────────── */}
-        <header className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
-          <div className="flex flex-col gap-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white">
-                Application Tracker
-              </h1>
-              <span className="px-2.5 py-0.5 rounded-full bg-[#22c55e]/15 text-[#22c55e] text-[11px] font-semibold border border-[#22c55e]/30 whitespace-nowrap">
-                Live Telemetry
-              </span>
-            </div>
-            <div className="flex items-center gap-2 text-xs text-[#737373]">
-              <span className="w-2 h-2 rounded-full bg-[#22c55e]" />
-              <span>
-                {metrics.total} active application{metrics.total === 1 ? '' : 's'} tracked across 7 pipeline states
-              </span>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Search */}
-            <div className="relative flex items-center min-w-[240px] flex-1 sm:flex-none bg-[#0D0D0D] rounded-lg border border-[#1A1A1A] focus-within:border-[#22c55e] transition-colors">
-              <span className="material-symbols-outlined text-[#737373] pl-3 text-[18px]">
-                search
-              </span>
-              <input
-                ref={searchRef}
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Filter by role, employer, tag…"
-                className="w-full bg-transparent text-white placeholder:text-[#737373] text-sm px-3 py-2.5 focus:outline-none"
-              />
-              {search ? (
-                <button
-                  type="button"
-                  onClick={() => setSearch('')}
-                  aria-label="Clear search"
-                  className="pr-3 text-[#737373] hover:text-white"
-                >
-                  <span className="material-symbols-outlined text-[16px]">
-                    close
-                  </span>
-                </button>
-              ) : (
-                <span className="pr-3 font-mono text-[10px] text-[#353534] hidden sm:block">
-                  ⌘K
-                </span>
-              )}
-            </div>
-
-            {/* Filter dropdown */}
-            <div className="relative" ref={filterRef}>
-              <button
-                type="button"
-                onClick={() => setFilterOpen((v) => !v)}
-                className="flex items-center gap-1.5 px-3 py-2.5 bg-[#0D0D0D] text-white text-sm rounded-lg border border-[#1A1A1A] hover:border-[#22c55e]/40 transition-colors whitespace-nowrap"
-              >
-                <span className="material-symbols-outlined text-[16px] text-[#737373]">
-                  tune
-                </span>
-                <span>Match: {minMatch === 0 ? 'Any' : `>${minMatch}%`}</span>
-                <span className="material-symbols-outlined text-[16px] text-[#737373]">
-                  expand_more
-                </span>
-              </button>
-              {filterOpen && (
-                <div className="absolute right-0 top-12 z-30 w-40 bg-[#0D0D0D] border border-[#1A1A1A] rounded-lg py-1 shadow-2xl">
-                  {[0, 70, 80, 90].map((n) => (
-                    <button
-                      key={n}
-                      type="button"
-                      onClick={() => {
-                        setMinMatch(n)
-                        setFilterOpen(false)
-                      }}
-                      className={`w-full text-left px-3 py-2 text-sm transition-colors ${
-                        minMatch === n
-                          ? 'bg-[#1c1b1b] text-white'
-                          : 'text-[#737373] hover:bg-[#1c1b1b] hover:text-white'
-                      }`}
-                    >
-                      {n === 0 ? 'Any match' : `> ${n}% match`}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* View switcher */}
-            <div className="flex items-center bg-[#0D0D0D] p-[3px] rounded-lg border border-[#1A1A1A]">
-              <button
-                type="button"
-                onClick={() => setView('kanban')}
-                aria-pressed={view === 'kanban'}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-semibold transition-colors ${
-                  view === 'kanban'
-                    ? 'bg-[#22c55e] text-black'
-                    : 'text-[#737373] hover:text-white'
-                }`}
-              >
-                <span className="material-symbols-outlined text-[16px]">
-                  view_kanban
-                </span>
-                <span className="hidden sm:inline">Kanban</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setView('list')}
-                aria-pressed={view === 'list'}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-semibold transition-colors ${
-                  view === 'list'
-                    ? 'bg-[#22c55e] text-black'
-                    : 'text-[#737373] hover:text-white'
-                }`}
-              >
-                <span className="material-symbols-outlined text-[16px]">
-                  table_rows
-                </span>
-                <span className="hidden sm:inline">List</span>
-              </button>
-            </div>
-
-            {/* Add button */}
-            <button
-              type="button"
-              onClick={() => {
-                resetAddForm()
-                setAddOpen(true)
-              }}
-              className="flex items-center gap-1.5 px-4 py-2.5 bg-[#22c55e] hover:bg-[#16A34A] text-black text-sm font-semibold rounded-lg transition-colors active:scale-[0.98]"
-            >
-              <span className="material-symbols-outlined text-[18px]">add</span>
-              <span className="whitespace-nowrap">Add Application</span>
-            </button>
-          </div>
-        </header>
-
-        {/* ── Metric ribbon ──────────────────────────── */}
-        <section
-          aria-label="Tracker metrics"
-          className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2"
-        >
-          <MetricCard
-            label="High Match (>90%)"
-            value={metrics.highMatch}
-            accent="green"
-            sub={`${
-              metrics.total ? Math.round((metrics.highMatch / metrics.total) * 100) : 0
-            }%`}
-          />
-          <MetricCard
-            label="Active Pipeline"
-            value={metrics.activePipeline}
-            accent="neutral"
-            sub="Screen + Interview"
-          />
-          <MetricCard
-            label="Offers Received"
-            value={metrics.offers}
-            accent="green"
-            sub={metrics.offers > 0 ? 'Decision pending' : 'None yet'}
-          />
-          <MetricCard
-            label="Salary Range Mean"
-            value={metrics.salaryMean ? `$${Math.round(metrics.salaryMean / 1000)}k` : '—'}
-            accent="neutral"
-            sub="±12k band"
-          />
-          <MetricCard
-            label="Average Response"
-            value={`${metrics.avgResponseDays}d`}
-            accent="neutral"
-            sub="ATS velocity"
-          />
-          <MetricCard
-            label="Audit Integrity"
-            value={`${metrics.auditIntegrity}%`}
-            accent="green"
-            sub="Zero scams"
-          />
-          <MetricCard
-            label="Stalled / Ghosted"
-            value={metrics.stalled}
-            accent="red"
-            sub=">21d no ping"
-          />
-        </section>
-
-        {/* ── Kanban / List ──────────────────────────── */}
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-24 gap-2">
-            <span className="material-symbols-outlined text-[#22c55e] text-3xl animate-spin">
-              sync
-            </span>
-            <p className="text-sm text-[#737373]">Loading applications…</p>
-          </div>
-        ) : view === 'kanban' ? (
-          <section className="w-full overflow-x-auto pb-6 -mx-4 px-4 focus:outline-none">
-            <div className="flex items-start gap-4 min-w-max">
-              {STATUSES.map((status) => {
-                const items = appsByStatus[status.key]
-                const isDropTarget = dragOverStatus === status.key
-                return (
-                  <div
-                    key={status.key}
-                    className="w-[240px] flex-shrink-0 flex flex-col gap-2"
-                  >
-                    {/* Column header */}
-                    <div className="flex items-center justify-between px-3 py-2 border-b border-[#1A1A1A]">
-                      <div className="flex items-center gap-2">
-                        <span className={`w-2 h-2 rounded-full ${status.dotClass}`} />
-                        <span className="text-[11px] font-semibold uppercase tracking-wider text-white">
-                          {status.label}
-                        </span>
-                      </div>
-                      <span className="px-2 py-0.5 rounded bg-[#1c1b1b] text-[#737373] font-mono text-[11px]">
-                        {items.length}
-                      </span>
-                    </div>
-
-                    {/* Dropzone */}
-                    <div
-                      onDragOver={(e) => {
-                        e.preventDefault()
-                        e.dataTransfer.dropEffect = 'move'
-                        if (dragOverStatus !== status.key) setDragOverStatus(status.key)
-                      }}
-                      onDragLeave={(e) => {
-                        if (
-                          e.currentTarget === e.target ||
-                          !e.currentTarget.contains(e.relatedTarget as Node)
-                        ) {
-                          setDragOverStatus((s) => (s === status.key ? null : s))
-                        }
-                      }}
-                      onDrop={(e) => {
-                        e.preventDefault()
-                        handleDrop(status.key)
-                      }}
-                      className={`flex flex-col gap-2 min-h-[500px] p-1.5 rounded-lg border border-dashed transition-colors ${
-                        isDropTarget
-                          ? 'border-[#22c55e]/70 bg-[#22c55e]/5'
-                          : 'border-[#1A1A1A] bg-black/30 hover:border-[#22c55e]/30'
-                      }`}
-                    >
-                      {items.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-8 text-center opacity-40">
-                          <span className="material-symbols-outlined text-[#737373] text-[24px] mb-1">
-                            inbox
-                          </span>
-                          <span className="text-[10px] text-[#737373]">
-                            Drop here
-                          </span>
-                        </div>
-                      ) : (
-                        items.map((a) => (
-                          <KanbanCard
-                            key={a.id}
-                            app={a}
-                            dragging={draggingId === a.id}
-                            onDragStart={(id) => setDraggingId(id)}
-                            onDragEnd={() => {
-                              setDraggingId(null)
-                              setDragOverStatus(null)
-                            }}
-                            onDelete={(app) => setDeleteTarget(app)}
-                          />
-                        ))
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </section>
-        ) : (
-          <section className="bg-[#0D0D0D] border border-[#1A1A1A] rounded-xl overflow-hidden">
-            {filtered.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
-                <span className="material-symbols-outlined text-[#737373] text-4xl mb-2">
-                  inbox
-                </span>
-                <p className="text-sm text-white font-medium mb-1">
-                  No matching applications
-                </p>
-                <p className="text-xs text-[#737373]">
-                  Try clearing your search or filter.
-                </p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse min-w-[720px]">
-                  <thead>
-                    <tr className="bg-black text-[11px] uppercase tracking-wider text-[#737373]">
-                      <th className="py-3 px-4 font-semibold">Company</th>
-                      <th className="py-3 px-4 font-semibold">Role</th>
-                      <th className="py-3 px-4 font-semibold">Applied</th>
-                      <th className="py-3 px-4 font-semibold">Salary</th>
-                      <th className="py-3 px-4 font-semibold">Status</th>
-                      <th className="py-3 px-4 font-semibold text-right">Match</th>
-                      <th className="py-3 px-4 font-semibold text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#1A1A1A]">
-                    {filtered.map((a) => {
-                      const status = STATUSES.find((s) => s.key === a.status)
-                      return (
-                        <tr
-                          key={a.id}
-                          className="hover:bg-[#141414] transition-colors group"
-                        >
-                          <td className="py-3 px-4">
-                            <Link
-                              to={`/dashboard/tracker/${a.id}`}
-                              className="flex items-center gap-3 min-w-0"
-                            >
-                              <span className="w-8 h-8 rounded bg-[#2a2a2a] flex items-center justify-center text-white text-xs font-bold shrink-0">
-                                {a.company_name.charAt(0).toUpperCase()}
-                              </span>
-                              <span className="text-sm text-white font-semibold truncate">
-                                {a.company_name}
-                              </span>
-                            </Link>
-                          </td>
-                          <td className="py-3 px-4 text-sm text-[#737373] truncate max-w-[240px]">
-                            {a.job_title}
-                          </td>
-                          <td className="py-3 px-4 text-xs text-[#737373]">
-                            <span className="block">{formatDate(a.date_applied)}</span>
-                            <span className="font-mono text-[11px] text-[#353534]">
-                              {relativeDate(a.date_applied)}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4 text-xs font-mono text-[#737373]">
-                            {formatSalaryRange(a.salary_min, a.salary_max)}
-                          </td>
-                          <td className="py-3 px-4">
-                            <span
-                              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
-                                a.status === 'offered'
-                                  ? 'bg-[#22c55e]/15 text-[#22c55e] border-[#22c55e]/30'
-                                  : a.status === 'rejected'
-                                  ? 'bg-[#EF4444]/15 text-[#EF4444] border-[#EF4444]/30'
-                                  : a.status === 'ghosted' || a.status === 'saved'
-                                  ? 'bg-[#1A1A1A] text-[#737373] border-[#1A1A1A]'
-                                  : 'bg-[#EAB308]/15 text-[#EAB308] border-[#EAB308]/30'
-                              }`}
-                            >
-                              <span className={`w-1.5 h-1.5 rounded-full ${status?.dotClass || 'bg-[#737373]'}`} />
-                              {STATUS_LABEL[a.status]}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4 text-right">
-                            {a.match_score ? (
-                              <span
-                                className={`font-mono text-xs font-semibold ${
-                                  a.match_score >= 90
-                                    ? 'text-[#22c55e]'
-                                    : a.match_score >= 70
-                                    ? 'text-[#EAB308]'
-                                    : 'text-[#EF4444]'
-                                }`}
-                              >
-                                {a.match_score}%
-                              </span>
-                            ) : (
-                              <span className="text-xs text-[#737373]">—</span>
-                            )}
-                          </td>
-                          <td className="py-3 px-4 text-right">
-                            <div className="flex items-center justify-end gap-1">
-                              <Link
-                                to={`/dashboard/tracker/${a.id}`}
-                                aria-label="View"
-                                className="w-7 h-7 rounded flex items-center justify-center text-[#737373] hover:text-white hover:bg-[#1c1b1b] transition-colors"
-                              >
-                                <span className="material-symbols-outlined text-[16px]">
-                                  visibility
-                                </span>
-                              </Link>
-                              <button
-                                type="button"
-                                onClick={() => setDeleteTarget(a)}
-                                aria-label="Delete"
-                                className="w-7 h-7 rounded flex items-center justify-center text-[#737373] hover:text-[#EF4444] hover:bg-[#EF4444]/10 transition-colors"
-                              >
-                                <span className="material-symbols-outlined text-[16px]">
-                                  delete
-                                </span>
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
-        )}
-      </div>
-
-      {/* ── Add Application Modal ─────────────────────── */}
-      {addOpen && (
-        <div
-          className="fixed inset-0 z-100 bg-black/80 backdrop-blur-sm flex items-start sm:items-center justify-center p-4 overflow-y-auto"
-          onClick={() => setAddOpen(false)}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="add-app-title"
-            className="w-full max-w-xl bg-[#0D0D0D] border border-[#1A1A1A] rounded-2xl p-5 sm:p-6 shadow-2xl my-8"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start justify-between gap-3 pb-3 border-b border-[#1A1A1A] mb-5">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-[#22c55e]/10 border border-[#22c55e]/30 flex items-center justify-center text-[#22c55e]">
-                  <span className="material-symbols-outlined text-[20px]">
-                    add_circle
-                  </span>
-                </div>
-                <div>
-                  <h2
-                    id="add-app-title"
-                    className="text-base font-bold text-white"
-                  >
-                    Register New Application
-                  </h2>
-                  <p className="text-xs text-[#737373]">
-                    Track a new role in your pipeline
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setAddOpen(false)}
-                aria-label="Close"
-                className="text-[#737373] hover:text-white transition-colors p-1"
-              >
-                <span className="material-symbols-outlined text-[20px]">
-                  close
-                </span>
-              </button>
-            </div>
-
-            <form onSubmit={handleAddSubmit} className="flex flex-col gap-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-white">
-                    Employer Name <span className="text-[#22c55e]">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={addForm.company_name}
-                    onChange={(e) =>
-                      setAddForm({ ...addForm, company_name: e.target.value })
-                    }
-                    maxLength={200}
-                    placeholder="e.g. OpenAI, Cloudflare, Linear"
-                    className="h-10 px-3 bg-black text-white text-sm rounded-lg border border-[#1A1A1A] focus:border-[#22c55e] focus:outline-none transition-colors placeholder-[#737373]"
-                  />
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-white">
-                    Job Role / Title <span className="text-[#22c55e]">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={addForm.job_title}
-                    onChange={(e) =>
-                      setAddForm({ ...addForm, job_title: e.target.value })
-                    }
-                    maxLength={200}
-                    placeholder="e.g. Senior Infrastructure Engineer"
-                    className="h-10 px-3 bg-black text-white text-sm rounded-lg border border-[#1A1A1A] focus:border-[#22c55e] focus:outline-none transition-colors placeholder-[#737373]"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-white">
-                    Initial Stage
-                  </label>
-                  <select
-                    value={addForm.status}
-                    onChange={(e) =>
-                      setAddForm({
-                        ...addForm,
-                        status: e.target.value as ApplicationStatus,
-                      })
-                    }
-                    className="h-10 px-3 bg-black text-white text-sm rounded-lg border border-[#1A1A1A] focus:border-[#22c55e] focus:outline-none transition-colors"
-                  >
-                    {STATUSES.map((s, i) => (
-                      <option key={s.key} value={s.key}>
-                        {i + 1}. {s.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-white">
-                    Date Applied
-                  </label>
-                  <input
-                    type="date"
-                    value={addForm.date_applied}
-                    onChange={(e) =>
-                      setAddForm({ ...addForm, date_applied: e.target.value })
-                    }
-                    className="h-10 px-3 bg-black text-white text-sm rounded-lg border border-[#1A1A1A] focus:border-[#22c55e] focus:outline-none transition-colors"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-white">
-                    Location
-                  </label>
-                  <input
-                    type="text"
-                    value={addForm.location}
-                    onChange={(e) =>
-                      setAddForm({ ...addForm, location: e.target.value })
-                    }
-                    maxLength={100}
-                    placeholder="Remote / City"
-                    className="h-10 px-3 bg-black text-white text-sm rounded-lg border border-[#1A1A1A] focus:border-[#22c55e] focus:outline-none transition-colors placeholder-[#737373]"
-                  />
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-white">
-                    Salary Min ($)
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={addForm.salary_min}
-                    onChange={(e) =>
-                      setAddForm({
-                        ...addForm,
-                        salary_min: e.target.value.replace(/[^\d]/g, ''),
-                      })
-                    }
-                    placeholder="150000"
-                    className="h-10 px-3 bg-black text-white text-sm rounded-lg border border-[#1A1A1A] focus:border-[#22c55e] focus:outline-none transition-colors font-mono placeholder-[#737373]"
-                  />
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-white">
-                    Salary Max ($)
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={addForm.salary_max}
-                    onChange={(e) =>
-                      setAddForm({
-                        ...addForm,
-                        salary_max: e.target.value.replace(/[^\d]/g, ''),
-                      })
-                    }
-                    placeholder="200000"
-                    className="h-10 px-3 bg-black text-white text-sm rounded-lg border border-[#1A1A1A] focus:border-[#22c55e] focus:outline-none transition-colors font-mono placeholder-[#737373]"
-                  />
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-white">
-                  Job Posting URL
-                </label>
-                <input
-                  type="url"
-                  value={addForm.job_link}
-                  onChange={(e) =>
-                    setAddForm({ ...addForm, job_link: e.target.value })
-                  }
-                  placeholder="https://…"
-                  className="h-10 px-3 bg-black text-white text-sm rounded-lg border border-[#1A1A1A] focus:border-[#22c55e] focus:outline-none transition-colors placeholder-[#737373]"
-                />
-              </div>
-
-              {/* JD attachment toggle */}
-              <div className="p-4 rounded-lg bg-black border border-[#1A1A1A] flex flex-col gap-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="material-symbols-outlined text-[#22c55e] text-[20px] shrink-0">
-                      psychology
-                    </span>
-                    <div className="min-w-0">
-                      <span className="text-xs font-semibold text-white block">
-                        Job Description
-                      </span>
-                      <p className="text-[11px] text-[#737373] truncate">
-                        Optional — helps with future CV matching
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={jdEnabled}
-                    onClick={() => setJdEnabled((v) => !v)}
-                    className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${
-                      jdEnabled ? 'bg-[#22c55e]' : 'bg-[#1A1A1A]'
-                    }`}
-                  >
-                    <span
-                      className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                        jdEnabled ? 'translate-x-4' : 'translate-x-0'
-                      }`}
-                    />
-                  </button>
-                </div>
-
-                {jdEnabled && (
-                  <textarea
-                    value={addForm.jd_text}
-                    onChange={(e) =>
-                      setAddForm({ ...addForm, jd_text: e.target.value })
-                    }
-                    rows={4}
-                    maxLength={10000}
-                    placeholder="Paste job posting text, qualifications, requirements…"
-                    className="w-full p-3 bg-[#0D0D0D] text-white text-sm rounded-lg border border-[#1A1A1A] focus:border-[#22c55e] focus:outline-none resize-y transition-colors placeholder-[#737373]"
-                  />
-                )}
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-white">
-                  Notes (optional)
-                </label>
-                <textarea
-                  value={addForm.notes}
-                  onChange={(e) =>
-                    setAddForm({ ...addForm, notes: e.target.value })
-                  }
-                  rows={3}
-                  maxLength={5000}
-                  placeholder="Recruiter name, referral source, reminders…"
-                  className="w-full p-3 bg-black text-white text-sm rounded-lg border border-[#1A1A1A] focus:border-[#22c55e] focus:outline-none resize-y transition-colors placeholder-[#737373]"
-                />
-              </div>
-
-              {addError && (
-                <div className="p-3 rounded-lg bg-[#EF4444]/10 border border-[#EF4444]/30 text-sm text-[#EF4444] flex items-start gap-2">
-                  <span className="material-symbols-outlined text-[18px] shrink-0">
-                    error
-                  </span>
-                  <span>{addError}</span>
-                </div>
-              )}
-
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2 pt-3 border-t border-[#1A1A1A]">
-                <button
-                  type="button"
-                  onClick={() => setAddOpen(false)}
-                  className="px-5 py-2.5 bg-[#1c1b1b] hover:bg-[#2a2a2a] text-white text-sm font-medium rounded-lg border border-[#1A1A1A] transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={adding}
-                  className="flex items-center justify-center gap-2 px-5 py-2.5 bg-[#22c55e] hover:bg-[#16A34A] disabled:opacity-60 disabled:cursor-not-allowed text-black text-sm font-semibold rounded-lg transition-colors"
-                >
-                  <span
-                    className={`material-symbols-outlined text-[18px] ${
-                      adding ? 'animate-spin' : ''
-                    }`}
-                  >
-                    {adding ? 'sync' : 'save'}
-                  </span>
-                  {adding ? 'Saving…' : 'Record Application'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ── Delete Confirmation Modal ─────────────────── */}
-      {deleteTarget && (
-        <div
-          className="fixed inset-0 z-100 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
-          onClick={() => !deleting && setDeleteTarget(null)}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            className="w-full max-w-md bg-[#0D0D0D] border border-[#EF4444]/30 rounded-2xl p-6"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="w-12 h-12 rounded-full bg-[#EF4444]/10 border border-[#EF4444]/30 flex items-center justify-center mb-4">
-              <span className="material-symbols-outlined text-[#EF4444] text-[24px]">
-                warning
-              </span>
-            </div>
-            <h2 className="text-lg font-bold text-white mb-2">
-              Delete this application?
-            </h2>
-            <p className="text-sm text-[#737373] leading-relaxed mb-6">
-              This permanently removes{' '}
-              <span className="text-white font-medium">
-                {deleteTarget.job_title}
-              </span>{' '}
-              at{' '}
-              <span className="text-white font-medium">
-                {deleteTarget.company_name}
-              </span>
-              , along with all notes and timeline history. This cannot be undone.
-            </p>
-            <div className="flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setDeleteTarget(null)}
-                disabled={deleting}
-                className="px-4 py-2 text-sm text-[#737373] hover:text-white transition-colors disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleDelete}
-                disabled={deleting}
-                className="bg-[#EF4444] hover:bg-[#DC2626] disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors inline-flex items-center gap-1.5"
-              >
-                <span className="material-symbols-outlined text-[16px]">
-                  {deleting ? 'sync' : 'delete_forever'}
-                </span>
-                {deleting ? 'Deleting…' : 'Delete'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Toast ─────────────────────────────────────── */}
-      {toast && (
-        <div
-          role="status"
-          aria-live="polite"
-          className={`fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-100 max-w-[calc(100vw-2rem)] px-4 py-3 rounded-lg border shadow-xl bg-[#0D0D0D] text-sm flex items-center gap-2 ${
-            toast.kind === 'ok'
-              ? 'border-l-4 border-l-[#22c55e] border-[#1A1A1A]'
-              : 'border-l-4 border-l-[#EF4444] border-[#1A1A1A]'
-          }`}
-        >
-          <span
-            className={`material-symbols-outlined text-[18px] shrink-0 ${
-              toast.kind === 'ok' ? 'text-[#22c55e]' : 'text-[#EF4444]'
-            }`}
-          >
-            {toast.kind === 'ok' ? 'check_circle' : 'error'}
-          </span>
-          <span className="text-white break-words">{toast.text}</span>
-        </div>
-      )}
-    </>
-  )
-}
-
-// ─── Metric card sub-component ──────────────────────────
-function MetricCard({
-  label,
-  value,
-  sub,
-  accent,
-}: {
-  label: string
-  value: number | string
-  sub: string
-  accent: 'green' | 'red' | 'neutral'
-}) {
-  const valueClass =
-    accent === 'green'
-      ? 'text-[#22c55e]'
-      : accent === 'red'
-      ? 'text-[#EF4444]'
-      : 'text-white'
-
-  return (
-    <div className="bg-[#0D0D0D] border border-[#1A1A1A] rounded-lg p-3 flex flex-col gap-1 min-w-0">
-      <span className="text-[10px] uppercase tracking-wider text-[#737373] truncate">
-        {label}
-      </span>
-      <span className={`text-xl font-bold ${valueClass} leading-none tracking-tight`}>
-        {value}
-      </span>
-      <span className="text-[10px] text-[#737373] truncate">{sub}</span>
-    </div>
+    <span className={cn('mt-1 inline-flex items-center gap-1 text-[11px]', cls)}>
+      <Icon name={icon} className="text-[13px]" />
+      {text}
+    </span>
   )
 }

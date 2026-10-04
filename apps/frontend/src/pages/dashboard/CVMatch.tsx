@@ -1,846 +1,465 @@
 // FILE: src/pages/dashboard/CVMatch.tsx
-// ROUTE: /dashboard/cv-match (auth required)
-// BACKEND: POST /api/cv/upload, POST /api/cv/match
-// PURPOSE: Compare a CV against a job description using AI analysis.
-//          Returns match %, missing skills, ATS warnings, and bullet rewrites.
-// SECURITY:
-//   - File inputs validated client-side (MIME + extension + size) before upload.
-//   - No dangerouslySetInnerHTML — all AI/user text is auto-escaped by React.
-//   - No inline event handlers — all handlers are typed functions.
-//   - Input length guards prevent oversized payloads.
-//   - Double-submit protection via `running` flag.
+// ROUTE: /dashboard/cv-match
+// BACKEND: POST /api/cv/upload, POST /api/cv/match, POST /api/cv/structure (streamed)
+// PURPOSE: Compare a CV with a job post, review suggested rewrites (optional),
+//          then build the tailored CV in the Build tab. State lives in
+//          cvStore so it survives navigation.
 
-import { useState, useRef, useEffect } from 'react'
-import { Link } from 'react-router-dom'
+import { useCallback, useRef, useState, type ChangeEvent, type DragEvent } from 'react'
+import toast from 'react-hot-toast'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import SEO from '../../components/SEO'
-import { uploadCV, matchCV, type CVMatchResult } from '../../api/cv'
+import CVEditor from '../../components/cv/CVEditor'
+import AIProgressPopup, { EMPTY_PROGRESS, type AIProgressState } from '../../components/cv/AIProgressPopup'
+import { applyRewritesLocally, matchCV, payloadToCVData, structureCVStream, uploadCV, type StructureEvent } from '../../api/cv'
+import { useCVStore } from '../../store/cvStore'
+import { Alert, Badge, Button, Card, CardHeader, EmptyState, Icon, PageContainer, PageHeader, Tabs, TextArea, cn } from '../../components/ui'
+import { apiError } from '../../lib/axios'
 
-// ─── Constants ───────────────────────────────────────────
-const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5 MB (matches backend Multer limit)
-const ALLOWED_MIME = new Set([
-  'application/pdf',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-])
-const ALLOWED_EXT = new Set(['.pdf', '.docx'])
-const CV_MIN_CHARS = 100
-const CV_MAX_CHARS = 15000
-const JD_MIN_CHARS = 50
-const JD_MAX_CHARS = 10000
+const MAX_FILE_SIZE = 5 * 1024 * 1024
+const ALLOWED_MIME = new Set(['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'])
+const CV_MIN = 100
+const CV_MAX = 15000
+const JD_MIN = 50
+const JD_MAX = 10000
 
-// ─── Demo fallback (pilot mode — backend may return empty) ─
-const DEMO_RESULT: CVMatchResult = {
-  match_percentage: 0,
-  matched_skills: [],
-  missing_skills: [],
-  probably_have: [],
-  keyword_mismatches: [],
-  seniority_gaps: [],
-  ats_warnings: [],
-  bullet_rewrites: [],
+function fileProblem(file: File): string | null {
+  if (file.size > MAX_FILE_SIZE) return 'That file is over 5 MB.'
+  const n = file.name.toLowerCase()
+  if (!ALLOWED_MIME.has(file.type) || !/\.(pdf|docx)$/.test(n)) return 'Upload a PDF or Word (.docx) file.'
+  return null
 }
 
-// ─── Helper: validate a File before upload ───────────────
-function validateFile(file: File): { ok: true } | { ok: false; reason: string } {
-  if (file.size > MAX_FILE_SIZE) {
-    return { ok: false, reason: 'File too large. Maximum 5 MB.' }
-  }
-  if (!ALLOWED_MIME.has(file.type)) {
-    return { ok: false, reason: 'Only PDF and DOCX files are accepted.' }
-  }
-  const nameLower = file.name.toLowerCase()
-  const ext = nameLower.slice(nameLower.lastIndexOf('.'))
-  if (!ALLOWED_EXT.has(ext)) {
-    return { ok: false, reason: 'File extension must be .pdf or .docx' }
-  }
-  return { ok: true }
+function scoreTone(pct: number): { text: string; bar: string; label: string } {
+  if (pct >= 70) return { text: 'text-accent', bar: 'bg-accent', label: 'Strong match' }
+  if (pct >= 40) return { text: 'text-warn', bar: 'bg-warn', label: 'Partial match' }
+  return { text: 'text-danger', bar: 'bg-danger', label: 'Weak match' }
 }
 
-// ─── Helper: color for score ─────────────────────────────
-function scoreColor(pct: number): string {
-  if (pct >= 70) return '#22c55e'
-  if (pct >= 40) return '#EAB308'
-  return '#EF4444'
-}
-
-// ─── Component ───────────────────────────────────────────
 export default function CVMatch() {
-  const [cvText, setCvText] = useState('')
-  const [jdText, setJdText] = useState('')
+  const reduce = useReducedMotion()
+  const s = useCVStore()
+  const { cvText, jdText, uploadedFileName, matchResult: result, acceptedIndices, skippedIndices, activeCvTab, hasBuilt } = s
+
   const [saveToProfile, setSaveToProfile] = useState(true)
-  const [uploadedFileName, setUploadedFileName] = useState('')
   const [uploading, setUploading] = useState(false)
   const [running, setRunning] = useState(false)
-  const [result, setResult] = useState<CVMatchResult>(DEMO_RESULT)
-  const [accepted, setAccepted] = useState<Set<number>>(new Set())
-  const [skipped, setSkipped] = useState<Set<number>>(new Set())
-  const [toast, setToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(
-    null
-  )
+  const [building, setBuilding] = useState(false)
+  const [progress, setProgress] = useState<AIProgressState>(EMPTY_PROGRESS)
+  const [buildKey, setBuildKey] = useState(0)
+  const [dragOver, setDragOver] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
 
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const cvLen = cvText.trim().length
+  const jdLen = jdText.trim().length
+  const cvOk = cvLen >= CV_MIN && cvLen <= CV_MAX
+  const jdOk = jdLen >= JD_MIN && jdLen <= JD_MAX
+  const accepted = new Set(acceptedIndices)
+  const skipped = new Set(skippedIndices)
 
-  // Auto-dismiss toast
-  useEffect(() => {
-    if (!toast) return
-    const t = setTimeout(() => setToast(null), 3000)
-    return () => clearTimeout(t)
-  }, [toast])
-
-  // ── File upload handler ──────────────────────────────
   async function processFile(file: File) {
-    // SECURITY: validate before uploading
-    const check = validateFile(file)
-    if (!check.ok) {
-      setToast({ kind: 'err', text: check.reason })
-      return
-    }
-
+    const p = fileProblem(file)
+    if (p) return toast.error(p)
     setUploading(true)
     try {
       const res = await uploadCV(file, saveToProfile)
       if (res.success && res.data?.text) {
-        setCvText(res.data.text)
-        setUploadedFileName(file.name)
-        setToast({ kind: 'ok', text: 'CV parsed successfully.' })
-      } else {
-        setToast({ kind: 'err', text: res.error || 'Failed to parse CV.' })
-      }
-    } catch {
-      setToast({ kind: 'err', text: 'Upload failed — please try again.' })
+        s.setCvText(res.data.text)
+        s.setUploadedFileName(file.name)
+        toast.success('CV read')
+      } else toast.error(res.error || 'We couldn’t read that file.')
+    } catch (e) {
+      toast.error(apiError(e, 'Upload failed. Try again.'))
     } finally {
       setUploading(false)
-      // Clear input so the same file can be re-uploaded after edits
-      if (fileInputRef.current) fileInputRef.current.value = ''
+      if (fileRef.current) fileRef.current.value = ''
     }
   }
 
-  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (file) processFile(file)
-  }
-
-  function handleDrop(e: React.DragEvent<HTMLDivElement>) {
-    e.preventDefault()
-    const file = e.dataTransfer.files?.[0]
-    if (file) processFile(file)
-  }
-
-  // ── Run analysis ─────────────────────────────────────
-  async function handleRunAnalysis() {
-    if (running) return // double-submit guard
-
-    // SECURITY: input validation before network call
-    const trimmedCv = cvText.trim()
-    const trimmedJd = jdText.trim()
-
-    if (!trimmedCv && !uploadedFileName) {
-      setToast({ kind: 'err', text: 'Please upload a CV or paste CV text.' })
-      return
-    }
-    if (trimmedCv.length < CV_MIN_CHARS) {
-      setToast({
-        kind: 'err',
-        text: `CV must be at least ${CV_MIN_CHARS} characters.`,
-      })
-      return
-    }
-    if (trimmedCv.length > CV_MAX_CHARS) {
-      setToast({
-        kind: 'err',
-        text: `CV exceeds ${CV_MAX_CHARS.toLocaleString()} character limit.`,
-      })
-      return
-    }
-    if (trimmedJd.length < JD_MIN_CHARS) {
-      setToast({
-        kind: 'err',
-        text: `Job description must be at least ${JD_MIN_CHARS} characters.`,
-      })
-      return
-    }
-    if (trimmedJd.length > JD_MAX_CHARS) {
-      setToast({
-        kind: 'err',
-        text: `Job description exceeds ${JD_MAX_CHARS.toLocaleString()} character limit.`,
-      })
-      return
-    }
-
+  async function runAnalysis() {
+    if (running) return
+    if (cvLen < CV_MIN) return toast.error(`Your CV needs at least ${CV_MIN} characters.`)
+    if (cvLen > CV_MAX) return toast.error(`Your CV is over ${CV_MAX.toLocaleString()} characters.`)
+    if (jdLen < JD_MIN) return toast.error(`The job post needs at least ${JD_MIN} characters.`)
+    if (jdLen > JD_MAX) return toast.error(`The job post is over ${JD_MAX.toLocaleString()} characters.`)
     setRunning(true)
     try {
-      const res = await matchCV(trimmedCv, trimmedJd, saveToProfile)
+      const res = await matchCV(cvText.trim(), jdText.trim(), saveToProfile)
       if (res.success && res.data) {
-        setResult(res.data)
-        setAccepted(new Set())
-        setSkipped(new Set())
-        setToast({ kind: 'ok', text: 'Analysis complete.' })
-      } else {
-        // Pilot mode — keep demo result if backend returns nothing
-        setToast({ kind: 'err', text: res.error || 'Analysis unavailable.' })
-      }
-    } catch {
-      // Network/401 — silent fallback to demo (pilot mode)
-      setToast({ kind: 'err', text: 'Analysis unavailable — try again.' })
+        s.setMatchResult(res.data)
+        toast.success('Match ready')
+      } else toast.error(res.error || 'Matching is unavailable right now.')
+    } catch (e) {
+      toast.error(apiError(e, 'Matching is unavailable right now.'))
     } finally {
       setRunning(false)
     }
   }
 
-  // ── Rewrite accept / skip ────────────────────────────
-  function handleAccept(idx: number) {
-    setAccepted((prev) => new Set(prev).add(idx))
-    setSkipped((prev) => {
-      const next = new Set(prev)
-      next.delete(idx)
-      return next
+  // Rewrites are optional. Building works with zero accepted.
+  const buildCV = useCallback(async () => {
+    if (building || !result) return
+    if (cvText.trim().length < CV_MIN) return toast.error('Your CV text is missing or too short.')
+    setProgress({ ...EMPTY_PROGRESS })
+    const res = await structureCVStream(cvText.trim(), false, (event: StructureEvent) => {
+      if (event.type === 'start') {
+        setBuilding(true)
+        setProgress({ started: true, totalChunks: event.total_chunks, completedChunks: 0, merging: false, cached: false, error: null })
+      } else if (event.type === 'progress') setProgress((p) => ({ ...p, completedChunks: event.chunk }))
+      else if (event.type === 'merging') setProgress((p) => ({ ...p, merging: true }))
+      else if (event.type === 'error') setProgress((p) => ({ ...p, error: event.message }))
     })
-  }
-  function handleSkip(idx: number) {
-    setSkipped((prev) => new Set(prev).add(idx))
-    setAccepted((prev) => {
-      const next = new Set(prev)
-      next.delete(idx)
-      return next
-    })
-  }
+    if (!res.success || !res.data) {
+      toast.error(res.error || 'Couldn’t build the CV. Try again.')
+      setBuilding(false)
+      setProgress(EMPTY_PROGRESS)
+      return
+    }
+    const chosen = result.bullet_rewrites.filter((_, i) => accepted.has(i))
+    const { cv, appliedCount } = applyRewritesLocally(payloadToCVData(res.data), chosen)
+    s.setMatchCV(cv)
+    s.setHasBuilt(true)
+    s.setActiveCvTab('build')
+    setBuildKey((k) => k + 1)
+    if (chosen.length && appliedCount < chosen.length)
+      toast(`${appliedCount} of ${chosen.length} rewrites applied. Edit the rest by hand.`)
+    else toast.success(appliedCount ? `CV built with ${appliedCount} rewrite${appliedCount === 1 ? '' : 's'}` : 'CV built')
+    await new Promise((r) => setTimeout(r, 450))
+    setBuilding(false)
+    setProgress(EMPTY_PROGRESS)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [building, cvText, result, acceptedIndices])
 
-  // ── Derived values ───────────────────────────────────
-  const scorePct = Math.min(100, Math.max(0, result.match_percentage))
-  const scoreHex = scoreColor(scorePct)
-  const acceptedCount = accepted.size
-  const hasCvContent = cvText.trim().length > 0 || uploadedFileName.length > 0
+  const pct = result ? Math.min(100, Math.max(0, Math.round(result.match_percentage))) : 0
+  const tone = scoreTone(pct)
+  const rewrites = result?.bullet_rewrites ?? []
+  const reviewed = rewrites.filter((_, i) => accepted.has(i) || skipped.has(i)).length
 
   return (
     <>
-      <SEO
-        title="CV Intelligence | SafeApply.AI"
-        description="Match your CV against any job description. See keyword gaps, ATS warnings, and AI-suggested bullet rewrites — with full source citations."
-        path="/dashboard/cv-match"
-        noindex
-      />
+      <SEO title="CV match | SafeApply.AI" description="Compare your CV with a job post." path="/dashboard/cv-match" noindex />
+      <PageContainer>
+        <PageHeader title="CV match" description="See which skills the job asks for that your CV doesn’t show, then build a tailored version." />
 
-      <div className="w-full px-4 sm:px-6 py-4 sm:py-6 pb-16">
-        <div className="flex flex-col gap-5 sm:gap-6 max-w-7xl w-full mx-auto">
+        <Tabs
+          label="CV match views"
+          value={activeCvTab}
+          onChange={s.setActiveCvTab}
+          items={[
+            { value: 'analysis', label: 'Compare', icon: 'compare_arrows' },
+            { value: 'build', label: 'Tailored CV', icon: 'description', disabled: !hasBuilt },
+          ]}
+          className="self-start"
+        />
 
-          {/* ── Page header ─────────────────────────── */}
-          <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 pb-4 border-b border-[#1A1A1A]">
-            <div className="flex items-center gap-3 min-w-0">
-              <span className="p-2 bg-[#2a2a2a] rounded-lg text-[#22c55e] flex items-center justify-center shrink-0">
-                <span className="material-symbols-outlined text-[20px]">
-                  psychology
-                </span>
-              </span>
-              <div className="flex flex-col min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h1 className="text-base sm:text-lg font-semibold text-white">
-                    Neural CV Intelligence
-                  </h1>
-                  <span className="px-2 py-0.5 bg-[#22c55e]/10 border border-[#22c55e]/30 text-[#22c55e] text-[10px] font-semibold uppercase tracking-wider rounded">
-                    ATS Engine v4.2
-                  </span>
-                </div>
-                <span className="text-xs sm:text-sm text-[#737373] truncate">
-                  Synchronize source resume with target job telemetry for parsing compliance
-                </span>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 shrink-0 self-start md:self-auto">
-              <span className="w-2 h-2 rounded-full bg-[#22c55e] animate-pulse" />
-              <span className="font-mono text-[11px] uppercase tracking-wider text-[#737373]">
-                Parser Ready • 42 ms
-              </span>
-            </div>
-          </header>
-
-          {/* ── Two-panel input ─────────────────────── */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* Left: CV */}
-            <section className="bg-[#0D0D0D] border border-[#1A1A1A] rounded-xl p-4 sm:p-5 flex flex-col justify-between">
-              <div className="flex flex-col">
-                <div className="flex items-center justify-between pb-3 mb-4 border-b border-[#1A1A1A] gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="material-symbols-outlined text-[18px] text-[#22c55e]">
-                      description
-                    </span>
-                    <h2 className="text-sm font-semibold text-white truncate">
-                      Source CV / Resume
-                    </h2>
-                  </div>
-                  <span className="font-mono text-[11px] text-[#737373] whitespace-nowrap">
-                    INPUT_01
-                  </span>
-                </div>
-
-                {/* Dropzone */}
+        {activeCvTab === 'analysis' ? (
+          <>
+            <div className="grid lg:grid-cols-2 gap-6">
+              <Card className="flex flex-col gap-4">
+                <CardHeader
+                  title="Your CV"
+                  description="Upload a file or paste the text."
+                  className="mb-0"
+                  action={uploadedFileName ? <Badge tone="accent">{uploadedFileName}</Badge> : undefined}
+                />
                 <div
                   role="button"
                   tabIndex={0}
-                  aria-label="Upload CV — click or drop a PDF or DOCX file"
+                  aria-label="Upload a CV. PDF or Word, up to 5 MB."
+                  onClick={() => fileRef.current?.click()}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault()
-                      fileInputRef.current?.click()
+                      fileRef.current?.click()
                     }
                   }}
-                  onClick={() => fileInputRef.current?.click()}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={handleDrop}
-                  className="border-2 border-dashed border-[#1A1A1A] hover:border-[#22c55e]/70 transition-colors rounded-lg p-5 sm:p-6 flex flex-col items-center justify-center text-center cursor-pointer bg-black/40 group focus:outline-none focus:border-[#22c55e]"
-                >
-                  <div className="w-10 h-10 rounded-full bg-[#1c1b1b] flex items-center justify-center text-[#737373] group-hover:text-[#22c55e] transition-colors mb-3">
-                    <span className="material-symbols-outlined text-[22px]">
-                      {uploading ? 'sync' : 'upload_file'}
-                    </span>
-                  </div>
-                  {uploadedFileName ? (
-                    <>
-                      <p className="text-sm text-white font-medium break-all max-w-full">
-                        Loaded: {uploadedFileName}
-                      </p>
-                      <p className="text-xs text-[#737373] mt-1">
-                        Click to replace file
-                      </p>
-                    </>
-                  ) : (
-                    <>
-                      <p className="text-sm text-white mb-1">
-                        {uploading
-                          ? 'Parsing…'
-                          : 'Drop PDF or DOCX here or click to browse'}
-                      </p>
-                      <p className="text-xs text-[#737373]">
-                        Max 5 MB. PDF or DOCX only.
-                      </p>
-                    </>
+                  onDragOver={(e: DragEvent<HTMLDivElement>) => {
+                    e.preventDefault()
+                    setDragOver(true)
+                  }}
+                  onDragLeave={() => setDragOver(false)}
+                  onDrop={(e: DragEvent<HTMLDivElement>) => {
+                    e.preventDefault()
+                    setDragOver(false)
+                    const f = e.dataTransfer.files?.[0]
+                    if (f) void processFile(f)
+                  }}
+                  className={cn(
+                    'rounded-[12px] border-2 border-dashed px-4 py-5 flex items-center gap-3 cursor-pointer transition-colors',
+                    dragOver ? 'border-accent bg-accent/5' : 'border-line hover:border-muted/60',
                   )}
+                >
+                  <Icon name={uploading ? 'progress_activity' : 'upload_file'} className={cn('text-[24px] text-muted shrink-0', uploading && 'animate-spin text-accent')} />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">{uploading ? 'Reading your file…' : 'Drop a PDF or Word file, or click to choose'}</p>
+                    <p className="text-xs text-muted">Up to 5 MB. The text appears below for you to check.</p>
+                  </div>
                   <input
-                    ref={fileInputRef}
+                    ref={fileRef}
                     type="file"
-                    accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    accept=".pdf,.docx"
                     className="hidden"
-                    onChange={handleFileSelect}
                     disabled={uploading}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                      const f = e.target.files?.[0]
+                      if (f) void processFile(f)
+                    }}
                   />
                 </div>
-
-                {/* Divider */}
-                <div className="flex items-center gap-3 my-4">
-                  <div className="flex-1 h-px bg-[#1A1A1A]" />
-                  <span className="font-mono text-[11px] uppercase tracking-wider text-[#737373]">
-                    or paste as text
-                  </span>
-                  <div className="flex-1 h-px bg-[#1A1A1A]" />
-                </div>
-
-                <label htmlFor="cv-raw-text" className="sr-only">
-                  Paste CV content
-                </label>
-                <textarea
-                  id="cv-raw-text"
+                <TextArea
+                  aria-label="CV text"
+                  rows={10}
                   value={cvText}
-                  onChange={(e) => setCvText(e.target.value)}
-                  rows={6}
-                  maxLength={CV_MAX_CHARS}
-                  placeholder="Paste unformatted CV text here for direct semantic decomposition…"
-                  className="w-full bg-black border border-[#1A1A1A] rounded-lg p-3 font-mono text-sm text-white placeholder:text-[#737373] focus:outline-none focus:border-[#22c55e] transition-colors resize-none"
+                  onChange={(e) => s.setCvText(e.target.value)}
+                  placeholder="Or paste your CV text here."
+                  hint={`${cvLen.toLocaleString()} / ${CV_MAX.toLocaleString()} characters`}
+                  error={cvLen > CV_MAX ? `Over the ${CV_MAX.toLocaleString()} character limit` : undefined}
                 />
-                <div className="flex items-center justify-between text-[11px] text-[#737373] font-mono mt-2">
-                  <span>
-                    {cvText.length.toLocaleString()} / {CV_MAX_CHARS.toLocaleString()}
-                  </span>
-                  {cvText.length > 0 && cvText.length < CV_MIN_CHARS && (
-                    <span className="text-[#EAB308]">
-                      min {CV_MIN_CHARS} chars
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between pt-3 mt-4 border-t border-[#1A1A1A] gap-3">
-                <label className="flex items-center gap-2 cursor-pointer select-none min-w-0">
-                  <input
-                    type="checkbox"
-                    checked={saveToProfile}
-                    onChange={(e) => setSaveToProfile(e.target.checked)}
-                    className="w-4 h-4 rounded accent-[#22c55e] shrink-0"
-                  />
-                  <span className="text-xs text-white truncate">
-                    Save CV to profile repository
-                  </span>
+                <label className="inline-flex items-center gap-2 text-sm text-muted cursor-pointer select-none w-fit">
+                  <input type="checkbox" checked={saveToProfile} onChange={(e) => setSaveToProfile(e.target.checked)} className="w-4 h-4 accent-accent" />
+                  Keep this CV on my account for next time
                 </label>
-                <span className="font-mono text-[11px] text-[#737373] whitespace-nowrap">
-                  SECURE ✓
-                </span>
-              </div>
-            </section>
+              </Card>
 
-            {/* Right: JD */}
-            <section className="bg-[#0D0D0D] border border-[#1A1A1A] rounded-xl p-4 sm:p-5 flex flex-col justify-between">
-              <div className="flex flex-col h-full">
-                <div className="flex items-center justify-between pb-3 mb-4 border-b border-[#1A1A1A] gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="material-symbols-outlined text-[18px] text-[#22c55e]">
-                      terminal
-                    </span>
-                    <h2 className="text-sm font-semibold text-white truncate">
-                      Target Job Description
-                    </h2>
-                  </div>
-                  <span className="font-mono text-[11px] text-[#737373] whitespace-nowrap">
-                    INPUT_02
-                  </span>
-                </div>
-
-                <label htmlFor="jd-raw-text" className="sr-only">
-                  Paste job description
-                </label>
-                <textarea
-                  id="jd-raw-text"
+              <Card className="flex flex-col gap-4">
+                <CardHeader title="The job post" description="Paste the full description, including requirements." className="mb-0" />
+                <TextArea
+                  aria-label="Job description"
+                  rows={15}
                   value={jdText}
-                  onChange={(e) => setJdText(e.target.value)}
-                  rows={12}
-                  maxLength={JD_MAX_CHARS}
-                  placeholder="Paste complete job specification, role responsibilities, required qualifications…"
-                  className="w-full flex-1 min-h-[220px] bg-black border border-[#1A1A1A] rounded-lg p-3 font-mono text-sm text-white placeholder:text-[#737373] focus:outline-none focus:border-[#22c55e] transition-colors resize-none"
+                  onChange={(e) => s.setJdText(e.target.value)}
+                  placeholder="Paste the job description."
+                  hint={`${jdLen.toLocaleString()} / ${JD_MAX.toLocaleString()} characters`}
+                  error={jdLen > JD_MAX ? `Over the ${JD_MAX.toLocaleString()} character limit` : undefined}
+                  className="flex-1"
+                  wrapClassName="flex-1 flex flex-col"
                 />
-              </div>
-
-              <div className="flex flex-wrap items-center justify-between gap-3 pt-3 mt-4 border-t border-[#1A1A1A]">
-                <div className="flex items-center gap-1.5 text-[#737373] min-w-0">
-                  <span className="material-symbols-outlined text-[16px] shrink-0">
-                    info
-                  </span>
-                  <span className="text-xs truncate">
-                    {jdText.trim().split(/\s+/).filter(Boolean).length} words •{' '}
-                    {jdText.length.toLocaleString()} /{' '}
-                    {JD_MAX_CHARS.toLocaleString()}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setJdText('')}
-                  className="font-mono text-[11px] uppercase tracking-wider text-[#737373] hover:text-[#EF4444] transition-colors"
-                >
-                  Clear
-                </button>
-              </div>
-            </section>
-          </div>
-
-          {/* ── Run analysis ────────────────────────── */}
-          <button
-            type="button"
-            onClick={handleRunAnalysis}
-            disabled={running || uploading || !hasCvContent || !jdText.trim()}
-            className="w-full py-3 px-6 bg-[#22c55e] hover:bg-[#16A34A] disabled:opacity-50 disabled:cursor-not-allowed text-black text-sm font-bold uppercase tracking-wider rounded-lg transition-colors flex items-center justify-center gap-2"
-          >
-            <span
-              className={`material-symbols-outlined text-[20px] ${
-                running ? 'animate-spin' : ''
-              }`}
-            >
-              {running ? 'refresh' : 'bolt'}
-            </span>
-            <span>
-              {running ? 'Deconstructing vectors…' : 'Run CV Analysis'}
-            </span>
-          </button>
-
-          {/* ── Results ─────────────────────────────── */}
-          <section
-            aria-label="CV match analysis results"
-            className="bg-[#0D0D0D] border border-[#1A1A1A] rounded-xl p-5 sm:p-6 md:p-8 flex flex-col"
-          >
-            {/* Match overview */}
-            <div className="flex flex-col items-center text-center pb-6">
-              <span className="font-mono text-[11px] uppercase tracking-widest text-[#737373] mb-2">
-                Neural Resonance Telemetry
-              </span>
-              <div
-                className="text-5xl sm:text-6xl font-extrabold tracking-tight leading-none mb-3"
-                style={{ color: scoreHex }}
-              >
-                {scorePct}%
-              </div>
-              <div className="flex items-center gap-2 mb-5">
-                <span
-                  className="w-2 h-2 rounded-full"
-                  style={{ backgroundColor: scoreHex }}
-                />
-                <span className="text-sm font-semibold text-white uppercase tracking-wide">
-                  {scorePct >= 70
-                    ? 'Keyword Match Verified'
-                    : scorePct >= 40
-                    ? 'Moderate Match'
-                    : 'Low Match'}
-                </span>
-              </div>
-
-              <div className="w-full max-w-xl bg-black h-3 rounded-full overflow-hidden border border-[#1A1A1A] p-0.5">
-                <div
-                  className="h-full rounded-full transition-all duration-700"
-                  style={{ width: `${scorePct}%`, backgroundColor: scoreHex }}
-                />
-              </div>
-              <div className="flex items-center justify-between w-full max-w-xl mt-2 font-mono text-[11px] text-[#737373]">
-                <span>MIN PASS: 70%</span>
-                <span className="text-white">CURRENT: {scorePct}%</span>
-                <span>OPTIMAL: 95%+</span>
-              </div>
+                <Button size="lg" icon="compare_arrows" loading={running} onClick={runAnalysis} disabled={!cvOk || !jdOk} className="w-full">
+                  {running ? 'Comparing…' : result ? 'Compare again' : 'Compare'}
+                </Button>
+                {(!cvOk || !jdOk) && !running && (
+                  <p className="text-xs text-muted text-center -mt-2">
+                    {!cvOk ? `Add your CV (${CV_MIN}+ characters)` : `Add the job post (${JD_MIN}+ characters)`}
+                  </p>
+                )}
+              </Card>
             </div>
 
-            {/* 3 columns */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-6 border-t border-[#1A1A1A]">
-              {/* Skills You Have */}
-              <div className="flex flex-col bg-black/40 border border-[#1A1A1A] rounded-lg p-4">
-                <div className="flex items-center justify-between mb-3 gap-2">
-                  <div className="flex items-center gap-1.5 text-[#22c55e] min-w-0">
-                    <span className="material-symbols-outlined text-[18px] shrink-0">
-                      check_circle
-                    </span>
-                    <h3 className="text-sm font-semibold truncate">
-                      Skills You Have
-                    </h3>
-                  </div>
-                  <span className="font-mono text-[11px] text-[#22c55e] whitespace-nowrap">
-                    {result.matched_skills.length}
-                  </span>
-                </div>
-                <p className="text-xs text-[#737373] mb-3">
-                  Matches exact terminology identified in the target schema.
-                </p>
-                <div className="flex flex-wrap gap-1.5">
-                  {result.matched_skills.length === 0 ? (
-                    <span className="text-xs text-[#737373]">
-                      No matching skills detected.
-                    </span>
-                  ) : (
-                    result.matched_skills.map((s) => (
-                      <span
-                        key={s}
-                        className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-[#22c55e]/15 text-[#22c55e] border border-[#22c55e]/30"
-                      >
-                        {s}
-                      </span>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              {/* Skills Missing */}
-              <div className="flex flex-col bg-black/40 border border-[#1A1A1A] rounded-lg p-4">
-                <div className="flex items-center justify-between mb-3 gap-2">
-                  <div className="flex items-center gap-1.5 text-[#EF4444] min-w-0">
-                    <span className="material-symbols-outlined text-[18px] shrink-0">
-                      cancel
-                    </span>
-                    <h3 className="text-sm font-semibold truncate">
-                      Skills Missing
-                    </h3>
-                  </div>
-                  <span className="font-mono text-[11px] text-[#EF4444] whitespace-nowrap">
-                    {result.missing_skills.length +
-                      result.probably_have.length}{' '}
-                    gaps
-                  </span>
-                </div>
-                <p className="text-xs text-[#737373] mb-3">
-                  Deficits identified against JD filters.
-                </p>
-
-                {result.missing_skills.length > 0 && (
-                  <div className="flex flex-col gap-2 mb-3">
-                    <span className="font-mono text-[10px] text-[#EF4444] uppercase tracking-wider">
-                      Not in your CV:
-                    </span>
-                    <div className="flex flex-wrap gap-1.5">
-                      {result.missing_skills.map((s) => (
-                        <span
-                          key={s}
-                          className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-[#EF4444]/15 text-[#EF4444] border border-[#EF4444]/30"
-                        >
-                          {s}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {result.probably_have.length > 0 && (
-                  <div className="flex flex-col gap-2 pt-2 border-t border-[#1A1A1A]">
-                    <span className="font-mono text-[10px] text-[#EAB308] uppercase tracking-wider">
-                      Probably have — not mentioned:
-                    </span>
-                    <div className="flex flex-wrap gap-1.5">
-                      {result.probably_have.map((s) => (
-                        <span
-                          key={s}
-                          className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-[#EAB308]/15 text-[#EAB308] border border-[#EAB308]/30"
-                        >
-                          {s}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* ATS Warnings */}
-              <div className="flex flex-col bg-black/40 border border-[#1A1A1A] rounded-lg p-4">
-                <div className="flex items-center justify-between mb-3 gap-2">
-                  <div className="flex items-center gap-1.5 text-[#EAB308] min-w-0">
-                    <span className="material-symbols-outlined text-[18px] shrink-0">
-                      warning
-                    </span>
-                    <h3 className="text-sm font-semibold truncate">
-                      ATS Warnings
-                    </h3>
-                  </div>
-                  <span className="font-mono text-[11px] text-[#EAB308] whitespace-nowrap">
-                    {result.ats_warnings.length} flagged
-                  </span>
-                </div>
-                <p className="text-xs text-[#737373] mb-3">
-                  Structural elements that may trigger parser rejection.
-                </p>
-                <div className="flex flex-col gap-2">
-                  {result.ats_warnings.length === 0 ? (
-                    <span className="text-xs text-[#737373]">
-                      No ATS issues detected.
-                    </span>
-                  ) : (
-                    result.ats_warnings.map((w, i) => (
-                      <div
-                        key={i}
-                        className="flex items-start gap-2 p-2 rounded bg-[#1c1b1b] border border-[#1A1A1A]"
-                      >
-                        <span className="material-symbols-outlined text-[16px] text-[#EAB308] mt-0.5 shrink-0">
-                          warning
-                        </span>
-                        <span className="text-xs text-white leading-snug break-words">
-                          {w}
-                        </span>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* ── Keyword mismatches ──────────────────── */}
-          {result.keyword_mismatches.length > 0 && (
-            <section className="bg-[#0D0D0D] border border-[#1A1A1A] rounded-xl p-5 sm:p-6">
-              <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="material-symbols-outlined text-[20px] text-[#22c55e]">
-                    sync_alt
-                  </span>
-                  <h2 className="text-sm font-semibold text-white">
-                    Keyword Discrepancies
-                  </h2>
-                </div>
-                <span className="font-mono text-[11px] text-[#737373] whitespace-nowrap">
-                  EXACT_MATCH_AUDIT
-                </span>
-              </div>
-
-              <div className="overflow-x-auto -mx-5 sm:mx-0 px-5 sm:px-0">
-                <table className="w-full min-w-[600px] text-left border-collapse">
-                  <thead>
-                    <tr className="bg-black border-b border-[#1A1A1A]">
-                      <th className="py-2.5 px-3 text-[11px] font-semibold text-[#737373] uppercase tracking-wider">
-                        JD Exact Phrasing
-                      </th>
-                      <th className="py-2.5 px-3 text-[11px] font-semibold text-[#737373] uppercase tracking-wider">
-                        Your CV Uses
-                      </th>
-                      <th className="py-2.5 px-3 text-[11px] font-semibold text-[#737373] uppercase tracking-wider">
-                        Recommended Action
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#1A1A1A]">
-                    {result.keyword_mismatches.map((m, i) => (
-                      <tr key={i} className="hover:bg-[#1c1b1b] transition-colors">
-                        <td className="py-3 px-3 font-mono text-xs text-white break-words">
-                          {m.jd_term}
-                        </td>
-                        <td className="py-3 px-3 font-mono text-xs text-[#EF4444] break-words">
-                          {m.cv_term}
-                        </td>
-                        <td className="py-3 px-3 text-xs text-[#22c55e]">
-                          Use full form: &ldquo;{m.jd_term}&rdquo;
-                        </td>
-                      </tr>
+            {running && !result && (
+              <Card>
+                <div className="flex flex-col gap-4" aria-live="polite" aria-busy="true">
+                  <div className="skeleton h-6 w-40 rounded-[6px]" />
+                  <div className="skeleton h-2 w-full rounded-full" />
+                  <div className="grid sm:grid-cols-3 gap-4">
+                    {[0, 1, 2].map((i) => (
+                      <div key={i} className="skeleton h-24 rounded-[10px]" />
                     ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          )}
-
-          {/* ── Bullet rewrites ─────────────────────── */}
-          {result.bullet_rewrites.length > 0 && (
-            <section className="bg-[#0D0D0D] border border-[#1A1A1A] rounded-xl p-5 sm:p-6">
-              <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="material-symbols-outlined text-[20px] text-[#22c55e]">
-                    auto_fix_high
-                  </span>
-                  <h2 className="text-sm font-semibold text-white">
-                    Suggested Bullet Rewrites
-                  </h2>
+                  </div>
                 </div>
-                <span className="font-mono text-[11px] text-[#737373] whitespace-nowrap">
-                  {acceptedCount} / {result.bullet_rewrites.length} accepted
-                </span>
-              </div>
+              </Card>
+            )}
 
-              <div className="flex flex-col gap-4">
-                {result.bullet_rewrites.map((r, idx) => {
-                  const isAccepted = accepted.has(idx)
-                  const isSkipped = skipped.has(idx)
-                  return (
-                    <article
-                      key={idx}
-                      className={`p-4 bg-black border rounded-lg flex flex-col gap-3 transition-opacity ${
-                        isSkipped
-                          ? 'border-[#1A1A1A] opacity-40'
-                          : isAccepted
-                          ? 'border-[#22c55e]/50'
-                          : 'border-[#1A1A1A]'
-                      }`}
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="font-mono text-[11px] uppercase tracking-wider text-[#737373]">
-                          Bullet #{String(idx + 1).padStart(2, '0')}
-                        </span>
-                        <span className="text-[11px] font-semibold text-[#EAB308] bg-[#EAB308]/10 px-2 py-0.5 rounded border border-[#EAB308]/20">
-                          ATS boost expected
-                        </span>
-                      </div>
+            {!result && !running && (
+              <Card padded={false}>
+                <EmptyState icon="fact_check" title="No comparison yet" body="Add your CV and a job post above. You’ll see matched and missing skills, wording differences and suggested rewrites." />
+              </Card>
+            )}
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {/* Original */}
-                        <div className="flex flex-col p-3 bg-[#1c1b1b]/50 rounded border border-[#1A1A1A]">
-                          <span className="font-mono text-[10px] uppercase tracking-wider text-[#737373] mb-1.5">
-                            Original Bullet
-                          </span>
-                          <p className="text-sm text-white font-mono leading-relaxed break-words">
-                            {r.original}
-                          </p>
-                        </div>
+            {result && (
+              <motion.div
+                key={pct + rewrites.length}
+                initial={reduce ? false : { opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                className={cn('flex flex-col gap-6', running && 'opacity-60 pointer-events-none')}
+              >
+                <Card>
+                  <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6">
+                    <div>
+                      <p className="text-sm text-muted">Match</p>
+                      <p className={cn('mt-1 text-5xl font-semibold tracking-tight tabular leading-none', tone.text)}>{pct}%</p>
+                      <p className="mt-2 text-sm text-muted">{tone.label}. A rough guide based on skills and wording, not a hiring prediction.</p>
+                    </div>
+                    <div className="flex flex-col items-start md:items-end gap-2">
+                      <Button size="lg" icon="build" loading={building} onClick={buildCV}>
+                        Build tailored CV
+                      </Button>
+                      <span className="text-xs text-muted tabular">
+                        {accepted.size > 0 ? `${accepted.size} rewrite${accepted.size === 1 ? '' : 's'} will be applied` : 'Rewrites are optional'}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="mt-6 h-1.5 w-full rounded-full bg-line overflow-hidden" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label="Match">
+                    <motion.div
+                      className={cn('h-full rounded-full origin-left', tone.bar)}
+                      initial={reduce ? false : { scaleX: 0 }}
+                      animate={{ scaleX: pct / 100 }}
+                      transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
+                    />
+                  </div>
+                </Card>
 
-                        {/* Suggested */}
-                        <div
-                          className={`flex flex-col p-3 rounded border relative ${
-                            isAccepted
-                              ? 'bg-[#22c55e]/10 border-[#22c55e]/50'
-                              : 'bg-[#1c1b1b]/60 border-[#22c55e]/30'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between mb-1.5 gap-2">
-                            <span className="font-mono text-[10px] uppercase tracking-wider text-[#22c55e] font-semibold">
-                              AI Suggested
-                            </span>
-                            {isAccepted && (
-                              <span className="material-symbols-outlined text-[16px] text-[#22c55e]">
-                                verified
-                              </span>
-                            )}
+                <div className="grid md:grid-cols-3 gap-6">
+                  <SkillList title="Already on your CV" icon="check_circle" tone="accent" items={result.matched_skills} empty="None of the job’s key skills were found." />
+                  <SkillList title="Missing from your CV" icon="cancel" tone="danger" items={result.missing_skills} empty="Nothing obvious is missing." />
+                  <SkillList
+                    title="You may have these"
+                    icon="help"
+                    tone="warn"
+                    items={result.probably_have}
+                    empty="Nothing to flag."
+                    note="Implied by your experience but not written. Add them if true."
+                  />
+                </div>
+
+                {(result.keyword_mismatches.length > 0 || result.seniority_gaps.length > 0 || result.ats_warnings.length > 0) && (
+                  <div className="grid lg:grid-cols-2 gap-6">
+                    {result.keyword_mismatches.length > 0 && (
+                      <Card>
+                        <CardHeader title="Different wording" description="Use the job’s term if it describes the same thing." />
+                        <ul className="divide-y divide-line">
+                          {result.keyword_mismatches.map((k, i) => (
+                            <li key={i} className="py-2.5 flex items-center gap-3 text-sm min-w-0">
+                              <span className="text-muted truncate">{k.cv_term}</span>
+                              <Icon name="arrow_forward" className="text-[16px] text-muted shrink-0" />
+                              <span className="font-medium truncate">{k.jd_term}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </Card>
+                    )}
+                    {(result.seniority_gaps.length > 0 || result.ats_warnings.length > 0) && (
+                      <Card className="flex flex-col gap-5">
+                        {result.seniority_gaps.length > 0 && (
+                          <div>
+                            <h2 className="text-[15px] font-semibold mb-3">Experience level</h2>
+                            <Bullets items={result.seniority_gaps} icon="trending_up" tone="text-warn" />
                           </div>
-                          <p className="text-sm text-white font-mono leading-relaxed break-words">
-                            {r.suggested}
-                          </p>
-                        </div>
-                      </div>
+                        )}
+                        {result.ats_warnings.length > 0 && (
+                          <div>
+                            <h2 className="text-[15px] font-semibold mb-3">Formatting</h2>
+                            <Bullets items={result.ats_warnings} icon="warning" tone="text-warn" />
+                          </div>
+                        )}
+                      </Card>
+                    )}
+                  </div>
+                )}
 
-                      <div className="flex items-center justify-end gap-2 pt-1">
-                        <button
-                          type="button"
-                          onClick={() => handleSkip(idx)}
-                          disabled={isSkipped}
-                          className="px-3 py-1 rounded-lg bg-[#1c1b1b] hover:bg-[#2a2a2a] disabled:opacity-50 text-white text-xs font-medium transition-colors border border-[#1A1A1A]"
-                        >
-                          {isSkipped ? 'Skipped' : 'Skip'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleAccept(idx)}
-                          disabled={isAccepted}
-                          className="px-4 py-1 rounded-lg bg-[#22c55e] hover:bg-[#16A34A] disabled:opacity-60 text-black text-xs font-semibold transition-colors"
-                        >
-                          {isAccepted ? 'Accepted ✓' : 'Accept'}
-                        </button>
-                      </div>
-                    </article>
-                  )
-                })}
-              </div>
-            </section>
-          )}
-
-          {/* ── Bottom action ───────────────────────── */}
-          <section className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 p-5 bg-[#0D0D0D] border border-[#1A1A1A] rounded-xl">
-            <div className="flex items-center gap-3 min-w-0">
-              <span className="material-symbols-outlined text-[#22c55e] text-[22px] shrink-0">
-                published_with_changes
-              </span>
-              <div className="min-w-0">
-                <h3 className="text-sm font-semibold text-white">
-                  Commit Neural Refactor
-                </h3>
-                <p className="text-xs text-[#737373] truncate">
-                  {acceptedCount > 0
-                    ? `${acceptedCount} accepted rewrite${
-                        acceptedCount === 1 ? '' : 's'
-                      } ready to apply to CV Builder.`
-                    : 'Accept at least one rewrite to continue.'}
-                </p>
-              </div>
-            </div>
-
-            <Link
-              to="/dashboard/cv-builder"
-              aria-disabled={acceptedCount === 0}
-              className={`w-full sm:w-auto px-5 py-2.5 rounded-lg text-sm font-semibold uppercase tracking-wider flex items-center justify-center gap-2 transition-colors shrink-0 ${
-                acceptedCount === 0
-                  ? 'bg-[#1c1b1b] text-[#737373] cursor-not-allowed pointer-events-none'
-                  : 'bg-[#22c55e] hover:bg-[#16A34A] text-black'
-              }`}
-            >
-              <span>Apply to CV Builder</span>
-              <span className="material-symbols-outlined text-[18px]">
-                arrow_forward
-              </span>
-            </Link>
-          </section>
-        </div>
-      </div>
-
-      {/* ── Toast ─────────────────────────────────── */}
-      {toast && (
-        <div
-          role="status"
-          aria-live="polite"
-          className={`fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-100 max-w-[calc(100vw-2rem)] px-4 py-3 rounded-lg border shadow-xl bg-[#0D0D0D] text-sm flex items-center gap-2 ${
-            toast.kind === 'ok'
-              ? 'border-l-4 border-l-[#22c55e] border-[#1A1A1A]'
-              : 'border-l-4 border-l-[#EF4444] border-[#1A1A1A]'
-          }`}
-        >
-          <span
-            className={`material-symbols-outlined text-[18px] shrink-0 ${
-              toast.kind === 'ok' ? 'text-[#22c55e]' : 'text-[#EF4444]'
-            }`}
-          >
-            {toast.kind === 'ok' ? 'check_circle' : 'error'}
-          </span>
-          <span className="text-white break-words">{toast.text}</span>
-        </div>
-      )}
+                <Card>
+                  <CardHeader
+                    title="Suggested rewrites"
+                    description="Accept the ones that are true to your experience. You can build without any."
+                    action={rewrites.length > 0 ? <span className="text-xs text-muted tabular">{reviewed} of {rewrites.length} reviewed</span> : undefined}
+                  />
+                  {rewrites.length === 0 ? (
+                    <p className="text-sm text-muted">No rewrites suggested for this job.</p>
+                  ) : (
+                    <ul className="flex flex-col gap-3">
+                      <AnimatePresence initial={false}>
+                        {rewrites.map((r, i) => {
+                          const isA = accepted.has(i)
+                          const isS = skipped.has(i)
+                          return (
+                            <motion.li
+                              key={i}
+                              layout={!reduce}
+                              className={cn(
+                                'rounded-[12px] border p-4 flex flex-col gap-3 transition-colors',
+                                isA ? 'border-accent/40 bg-accent/5' : isS ? 'border-line opacity-60' : 'border-line',
+                              )}
+                            >
+                              <div className="grid md:grid-cols-2 gap-3 text-sm">
+                                <div>
+                                  <p className="text-xs text-muted mb-1">Now</p>
+                                  <p className="text-muted leading-relaxed break-words">{r.original}</p>
+                                </div>
+                                <div>
+                                  <p className="text-xs text-muted mb-1">Suggested</p>
+                                  <p className="leading-relaxed break-words">{r.suggested}</p>
+                                </div>
+                              </div>
+                              <div className="flex items-center justify-end gap-2">
+                                {(isA || isS) && <span className="mr-auto text-xs text-muted">{isA ? 'Will be applied' : 'Skipped'}</span>}
+                                <Button size="sm" variant={isS ? 'secondary' : 'ghost'} onClick={() => s.skipRewrite(i)} disabled={isS}>
+                                  Skip
+                                </Button>
+                                <Button size="sm" variant={isA ? 'primary' : 'secondary'} icon={isA ? 'check' : undefined} onClick={() => s.acceptRewrite(i)} disabled={isA}>
+                                  {isA ? 'Accepted' : 'Accept'}
+                                </Button>
+                              </div>
+                            </motion.li>
+                          )
+                        })}
+                      </AnimatePresence>
+                    </ul>
+                  )}
+                </Card>
+              </motion.div>
+            )}
+          </>
+        ) : hasBuilt ? (
+          <>
+            <Alert tone="accent" title="Tailored CV">
+              Built from your CV{accepted.size ? ` with ${accepted.size} accepted rewrite${accepted.size === 1 ? '' : 's'}` : ''}. Check every section before you send it.
+            </Alert>
+            <CVEditor key={buildKey} variant="match" contextLabel="Tailored" />
+          </>
+        ) : (
+          <Card padded={false}>
+            <EmptyState
+              icon="description"
+              title="Nothing built yet"
+              body="Run a comparison first, then press Build tailored CV."
+              action={
+                <Button size="sm" onClick={() => s.setActiveCvTab('analysis')}>
+                  Go to compare
+                </Button>
+              }
+            />
+          </Card>
+        )}
+      </PageContainer>
+      <AIProgressPopup open={building} state={progress} title="Building your CV" />
     </>
+  )
+}
+
+function SkillList({ title, icon, tone, items, empty, note }: { title: string; icon: string; tone: 'accent' | 'danger' | 'warn'; items: string[]; empty: string; note?: string }) {
+  const color = tone === 'accent' ? 'text-accent' : tone === 'danger' ? 'text-danger' : 'text-warn'
+  return (
+    <Card className="flex flex-col gap-3">
+      <div className="flex items-center gap-2">
+        <Icon name={icon} fill className={cn('text-[18px]', color)} />
+        <h2 className="text-[15px] font-semibold">{title}</h2>
+        <span className="ml-auto text-xs text-muted tabular">{items.length}</span>
+      </div>
+      {note && items.length > 0 && <p className="text-xs text-muted">{note}</p>}
+      {items.length === 0 ? (
+        <p className="text-sm text-muted">{empty}</p>
+      ) : (
+        <ul className="flex flex-wrap gap-1.5">
+          {items.map((x) => (
+            <li key={x} className="h-7 px-2.5 inline-flex items-center rounded-full bg-line text-[13px] max-w-full">
+              <span className="truncate">{x}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  )
+}
+
+function Bullets({ items, icon, tone }: { items: string[]; icon: string; tone: string }) {
+  return (
+    <ul className="flex flex-col gap-2">
+      {items.map((x, i) => (
+        <li key={i} className="flex items-start gap-2 text-sm text-muted leading-relaxed">
+          <Icon name={icon} className={cn('text-[16px] mt-0.5 shrink-0', tone)} />
+          <span className="break-words">{x}</span>
+        </li>
+      ))}
+    </ul>
   )
 }

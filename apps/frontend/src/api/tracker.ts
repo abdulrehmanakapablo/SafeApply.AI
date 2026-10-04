@@ -1,24 +1,11 @@
 // FILE: src/api/tracker.ts
 // PURPOSE: Frontend API client for /api/tracker/*
-// BACKEND: apps/backend/src/routes/tracker.ts
 
 import api from '../lib/axios'
 
-export type ApplicationStatus =
-  | 'saved'
-  | 'applied'
-  | 'screening'
-  | 'interviewing'
-  | 'offered'
-  | 'rejected'
-  | 'ghosted'
+export type ApplicationStatus = 'saved' | 'applied' | 'screening' | 'interviewing' | 'offered' | 'rejected' | 'ghosted'
 
-export type CommunicationType =
-  | 'email'
-  | 'call'
-  | 'interview'
-  | 'follow_up'
-  | 'rejection'
+export type CommunicationType = 'email' | 'call' | 'interview' | 'follow_up' | 'rejection'
 
 export interface Application {
   id: string
@@ -36,7 +23,13 @@ export interface Application {
   match_score?: number | null
   created_at: string
   updated_at: string
+  job_application_id?: string | null
+  /** Read receipt for applications sent through the SafeApply jobs board. */
+  receipt?: { cv_opened_at: string | null; first_response_at: string | null; no_response: boolean; stage: string } | null
 }
+
+/** Board applications open their receipt timeline; manual ones open the tracker card. */
+export const applicationHref = (a: Pick<Application, 'id' | 'job_application_id'>) => (a.job_application_id ? `/dashboard/applications/${a.job_application_id}` : `/dashboard/tracker/${a.id}`)
 
 export interface ApplicationTimeline {
   id: string
@@ -73,26 +66,7 @@ export interface ApplicationDetailResponse {
   data: ApplicationDetail
 }
 
-// GET /api/tracker — list with filters
-export async function getApplications(params?: {
-  status?: string
-  search?: string
-  page?: number
-}): Promise<ApplicationListResponse> {
-  const res = await api.get<ApplicationListResponse>('/tracker', { params })
-  return res.data
-}
-
-// GET /api/tracker/:id — single application with timeline + comm log
-export async function getApplication(
-  id: string
-): Promise<ApplicationDetailResponse> {
-  const res = await api.get<ApplicationDetailResponse>(`/tracker/${id}`)
-  return res.data
-}
-
-// POST /api/tracker — create
-export async function createApplication(payload: {
+export type ApplicationInput = {
   company_name: string
   job_title: string
   date_applied: string
@@ -103,42 +77,37 @@ export async function createApplication(payload: {
   status?: ApplicationStatus
   notes?: string
   jd_text?: string
-}) {
-  const res = await api.post('/tracker', payload)
+}
+
+export async function getApplications(params?: { status?: string; search?: string; page?: number }): Promise<ApplicationListResponse> {
+  const res = await api.get<ApplicationListResponse>('/tracker', { params })
   return res.data
 }
 
-// PATCH /api/tracker/:id — update fields
+export async function getApplication(id: string): Promise<ApplicationDetailResponse> {
+  const res = await api.get<ApplicationDetailResponse>(`/tracker/${id}`)
+  return res.data
+}
+
+export async function createApplication(payload: ApplicationInput) {
+  const res = await api.post('/tracker', payload)
+  return res.data as { success: boolean; data?: Application; error?: string }
+}
+
 export async function updateApplication(
   id: string,
-  payload: Partial<{
-    company_name: string
-    job_title: string
-    date_applied: string
-    job_link: string
-    salary_min: number
-    salary_max: number
-    location: string
-    status: ApplicationStatus
-    notes: string
-    match_score: number
-  }>
+  payload: Partial<Omit<ApplicationInput, 'jd_text'> & { match_score: number }>,
 ) {
   const res = await api.patch(`/tracker/${id}`, payload)
-  return res.data
+  return res.data as { success: boolean; data?: Application; error?: string }
 }
 
-// DELETE /api/tracker/:id
 export async function deleteApplication(id: string) {
   const res = await api.delete(`/tracker/${id}`)
-  return res.data
+  return res.data as { success: boolean; error?: string }
 }
 
-// POST /api/tracker/:id/communication
-export async function addCommunication(
-  id: string,
-  payload: { type: CommunicationType; notes: string; date: string }
-) {
+export async function addCommunication(id: string, payload: { type: CommunicationType; notes: string; date: string }) {
   const res = await api.post(`/tracker/${id}/communication`, payload)
-  return res.data
+  return res.data as { success: boolean; data?: CommunicationLogEntry; error?: string }
 }

@@ -1,0 +1,16 @@
+# Replace the domain in the Sitemap line with your production domain.
+User-agent: *
+Allow: /
+Disallow: /dashboard
+Disallow: /recruiter
+Disallow: /freelancer
+Disallow: /client
+Disallow: /admin
+Disallow: /billing
+Disallow: /me
+Disallow: /disputes
+Disallow: /team/join
+Disallow: /invite
+Disallow: /share/search
+
+Sitemap: https://safeapply.ai/sitemap.xml

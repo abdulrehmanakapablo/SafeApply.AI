@@ -1,6 +1,8 @@
-import { Router } from 'express'
+import { Router, type Router as RouterType } from 'express'
 import { authMiddleware } from '../middleware/auth'
+import { requireRole } from '../middleware/roles'
 import { validate } from '../middleware/validate'
+import { writeLimiter } from '../middleware/rateLimiter'
 import {
   createApplicationSchema,
   updateApplicationSchema,
@@ -15,13 +17,15 @@ import {
   addCommunication,
 } from '../controllers/tracker.controller'
 
-const router = Router()
+const router: RouterType = Router()
 
-router.get('/', authMiddleware, getApplications)
-router.post('/', authMiddleware, validate(createApplicationSchema), createApplication)
-router.get('/:id', authMiddleware, getApplication)
-router.patch('/:id', authMiddleware, validate(updateApplicationSchema), updateApplication)
-router.delete('/:id', authMiddleware, deleteApplication)
-router.post('/:id/communication', authMiddleware, validate(addCommunicationSchema), addCommunication)
+router.use(authMiddleware, requireRole('user', 'admin'))
+
+router.get('/', getApplications)
+router.post('/', writeLimiter, validate(createApplicationSchema), createApplication)
+router.get('/:id', getApplication)
+router.patch('/:id', writeLimiter, validate(updateApplicationSchema), updateApplication)
+router.delete('/:id', writeLimiter, deleteApplication)
+router.post('/:id/communication', writeLimiter, validate(addCommunicationSchema), addCommunication)
 
 export default router

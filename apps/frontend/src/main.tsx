@@ -1,12 +1,9 @@
 // FILE: src/main.tsx
+// React.StrictMode stays off: CVBuilder fires a long AI call on mount and
+// StrictMode's double-mount in dev would fire it twice against Groq.
 
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-import './index.css'
+import ReactDOM from 'react-dom/client'
 import App from './App'
+import './index.css'
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>
-)
+ReactDOM.createRoot(document.getElementById('root')!).render(<App />)

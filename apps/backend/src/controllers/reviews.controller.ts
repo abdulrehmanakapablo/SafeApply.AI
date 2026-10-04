@@ -2,30 +2,45 @@
 // FILE: apps/backend/src/controllers/reviews.controller.ts
 // PURPOSE: Anonymous company reviews — read and write
 // SECURITY: reviewer_id NEVER included in public responses
+// Writing reviews is unlimited for signed-up users (rate limited per hour).
 // ============================================================
 
 import { Request, Response } from 'express'
+import { createHash } from 'crypto'
 import { supabaseAdmin } from '../config/supabase'
-import { sanitizeObject } from '../utils/sanitize'
+import { sanitizeObject, safeSearchTerm, pageParam, uuidParam } from '../utils/sanitize'
+import { getCached, setCached } from '../services/cache.service'
+import { companyResponseRate } from '../utils/recruiter'
 import { sendSuccess, sendError, sendPaginated } from '../utils/response'
 
 // Helper to build company slug from name
 function buildSlug(name: string): string {
-  return name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+  const slug = name
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 120)
+  // Names with no latin letters (e.g. 日本電気) would give an empty slug.
+  return slug || `company-${createHash('sha256').update(name.trim().toLowerCase()).digest('hex').slice(0, 12)}`
 }
 
 // ─── GET COMPANIES ────────────────────────────────────────
 export async function getCompanies(req: Request, res: Response): Promise<void> {
   try {
-    const page = parseInt(req.query.page as string) || 1
+    const page = pageParam(req.query.page)
     const limit = 20
     const offset = (page - 1) * limit
-    const search = req.query.search as string
-    const minRating = parseFloat(req.query.min_rating as string) || 0
+    const search = safeSearchTerm(req.query.search)
+    const minRating = Math.min(5, Math.max(0, parseFloat(String(req.query.min_rating)) || 0))
 
     let query = supabaseAdmin
       .from('companies')
-      .select('id, slug, name, industry, avg_overall_rating, avg_culture_rating, avg_interview_rating, total_reviews', { count: 'exact' })
+      .select(
+        'id, slug, name, industry, avg_overall_rating, avg_culture_rating, avg_interview_rating, total_reviews',
+        { count: 'exact' },
+      )
       .gt('total_reviews', 0)
       .gte('avg_overall_rating', minRating)
       .order('total_reviews', { ascending: false })
@@ -49,13 +64,21 @@ export async function getCompanies(req: Request, res: Response): Promise<void> {
 }
 
 // ─── GET COMPANY DETAIL ───────────────────────────────────
+const SLUG_RE = /^[a-z0-9-]{1,200}$/
+
 export async function getCompany(req: Request, res: Response): Promise<void> {
   try {
-    const { slug } = req.params
+    const slug = String(req.params.slug ?? '')
+    if (!SLUG_RE.test(slug)) {
+      sendError(res, 'Company not found', 404)
+      return
+    }
 
+    // Explicit public columns: internal verification notes and domain-check
+    // results stay private.
     const { data: company, error } = await supabaseAdmin
       .from('companies')
-      .select('*')
+      .select('id, slug, name, industry, avg_overall_rating, avg_culture_rating, avg_interview_rating, total_reviews, website, about, size, locations, verification_status, penalty_level, trust_level, company_scores(applications, opened_pct, replied_7d_pct, no_response_pct, ghost_jobs_90d, hires_here, hires_verified, interviews_confirmed)')
       .eq('slug', slug)
       .single()
 
@@ -64,7 +87,38 @@ export async function getCompany(req: Request, res: Response): Promise<void> {
       return
     }
 
-    sendSuccess(res, company)
+    const verified = company.verification_status === 'verified'
+    const [jobsRes, response] = verified
+      ? await Promise.all([
+          supabaseAdmin
+            .from('jobs')
+            .select('id, title, location, work_mode, employment_type')
+            .eq('company_id', company.id)
+            .eq('status', 'open')
+            .gte('last_activity_at', new Date(Date.now() - 60 * 86_400_000).toISOString())
+            .order('last_activity_at', { ascending: false })
+            .limit(10),
+          companyResponseRate(company.id),
+        ])
+      : [{ data: [] }, { rate: null, sample: 0 }]
+
+    const { verification_status: _vs, penalty_level, company_scores, ...pub } = company
+    void _vs
+    const record = Array.isArray(company_scores) ? company_scores[0] : company_scores
+    sendSuccess(res, {
+      ...pub,
+      record: record || null,
+      // Level 2+ = repeated ghosting; shown publicly as a warning.
+      ghost_warning: (penalty_level || 0) >= 2,
+      badges: verified ? ((await supabaseAdmin.from('badges_earned').select('badge_key, earned_at').eq('subject_type', 'company').eq('subject_id', company.id)).data || []) : [],
+      verified,
+      // Only verified profiles show employer-written text.
+      website: verified ? company.website : null,
+      about: verified ? company.about : null,
+      open_jobs: jobsRes.data || [],
+      response_rate: response.rate,
+      response_sample: response.sample,
+    })
   } catch (error) {
     console.error('Get company error:', error)
     sendError(res, 'Server error', 500)
@@ -74,12 +128,15 @@ export async function getCompany(req: Request, res: Response): Promise<void> {
 // ─── GET COMPANY REVIEWS ──────────────────────────────────
 export async function getCompanyReviews(req: Request, res: Response): Promise<void> {
   try {
-    const { slug } = req.params
-    const page = parseInt(req.query.page as string) || 1
+    const slug = String(req.params.slug ?? '')
+    if (!SLUG_RE.test(slug)) {
+      sendError(res, 'Company not found', 404)
+      return
+    }
+    const page = pageParam(req.query.page)
     const limit = 20
     const offset = (page - 1) * limit
 
-    // Get company id from slug
     const { data: company } = await supabaseAdmin
       .from('companies')
       .select('id')
@@ -96,7 +153,7 @@ export async function getCompanyReviews(req: Request, res: Response): Promise<vo
       .from('reviews')
       .select(
         'id, company_name, relationship, role_type, overall_rating, culture_rating, interview_rating, would_recommend, review_text, interview_process, salary_min, salary_max, helpful_count, created_at',
-        { count: 'exact' }
+        { count: 'exact' },
       )
       .eq('company_id', company.id)
       .eq('moderation_status', 'approved')
@@ -108,7 +165,15 @@ export async function getCompanyReviews(req: Request, res: Response): Promise<vo
       return
     }
 
-    sendPaginated(res, data || [], count || 0, page, limit)
+    // Attach the company's public reply (author is never exposed).
+    const ids = (data || []).map((r) => r.id)
+    const replies: Record<string, { body: string; updated_at: string }> = {}
+    if (ids.length) {
+      const { data: rows } = await supabaseAdmin.from('review_replies').select('review_id, body, updated_at').in('review_id', ids)
+      for (const r of rows || []) replies[r.review_id] = { body: r.body, updated_at: r.updated_at }
+    }
+
+    sendPaginated(res, (data || []).map((r) => ({ ...r, reply: replies[r.id] || null })), count || 0, page, limit)
   } catch (error) {
     console.error('Get company reviews error:', error)
     sendError(res, 'Server error', 500)
@@ -118,8 +183,9 @@ export async function getCompanyReviews(req: Request, res: Response): Promise<vo
 // ─── CREATE REVIEW ────────────────────────────────────────
 export async function createReview(req: Request, res: Response): Promise<void> {
   try {
+    // Writing reviews is unlimited for signed-up users (auth route).
     const body = sanitizeObject(req.body)
-    const slug = buildSlug(body.company_name)
+    const slug = buildSlug(body.company_name as string)
 
     // Find or create company record
     let companyId: string
@@ -152,7 +218,7 @@ export async function createReview(req: Request, res: Response): Promise<void> {
       .insert({
         company_id: companyId,
         company_name: body.company_name,
-        reviewer_id: req.user!.userId, // Stored but never returned publicly
+        reviewer_id: req.user!.userId,
         relationship: body.relationship,
         role_type: body.role_type,
         overall_rating: body.overall_rating,
@@ -167,6 +233,7 @@ export async function createReview(req: Request, res: Response): Promise<void> {
       })
 
     if (reviewError) {
+      console.error('Insert review DB error:', reviewError)
       sendError(res, 'Failed to submit review', 500)
       return
     }
@@ -174,7 +241,12 @@ export async function createReview(req: Request, res: Response): Promise<void> {
     // Update company aggregate scores
     await updateCompanyAggregates(companyId)
 
-    sendSuccess(res, null, 201, 'Review submitted successfully. It will appear after moderation.')
+    sendSuccess(
+      res,
+      null,
+      201,
+      'Review submitted successfully. It will appear after moderation.',
+    )
   } catch (error) {
     console.error('Create review error:', error)
     sendError(res, 'Server error', 500)
@@ -184,9 +256,32 @@ export async function createReview(req: Request, res: Response): Promise<void> {
 // ─── MARK REVIEW AS HELPFUL ───────────────────────────────
 export async function markHelpful(req: Request, res: Response): Promise<void> {
   try {
-    const { id } = req.params
+    const id = uuidParam(req.params.id)
+    if (!id) {
+      sendError(res, 'Invalid review id', 400)
+      return
+    }
+
+    // One vote per user per review (remembered for a year in Redis).
+    const voteKey = `${req.user!.userId}:${id}`
+    if (await getCached<boolean>('helpful', voteKey)) {
+      sendSuccess(res, null, 200, 'Already marked as helpful')
+      return
+    }
+
+    const { data: review } = await supabaseAdmin
+      .from('reviews')
+      .select('id')
+      .eq('id', id)
+      .eq('moderation_status', 'approved')
+      .maybeSingle()
+    if (!review) {
+      sendError(res, 'Review not found', 404)
+      return
+    }
 
     await supabaseAdmin.rpc('increment_helpful_count', { review_id: id })
+    await setCached('helpful', voteKey, true, 365 * 86400)
 
     sendSuccess(res, null, 200, 'Marked as helpful')
   } catch (error) {
@@ -196,7 +291,7 @@ export async function markHelpful(req: Request, res: Response): Promise<void> {
 }
 
 // ─── HELPER: Update company aggregate scores ──────────────
-async function updateCompanyAggregates(companyId: string): Promise<void> {
+export async function updateCompanyAggregates(companyId: string): Promise<void> {
   try {
     const { data } = await supabaseAdmin
       .from('reviews')
@@ -204,12 +299,13 @@ async function updateCompanyAggregates(companyId: string): Promise<void> {
       .eq('company_id', companyId)
       .eq('moderation_status', 'approved')
 
-    if (!data || data.length === 0) return
-
-    const total = data.length
-    const avgOverall = data.reduce((sum, r) => sum + r.overall_rating, 0) / total
-    const avgCulture = data.reduce((sum, r) => sum + r.culture_rating, 0) / total
-    const avgInterview = data.reduce((sum, r) => sum + r.interview_rating, 0) / total
+    const rows = data || []
+    const total = rows.length
+    const avg = (k: 'overall_rating' | 'culture_rating' | 'interview_rating') =>
+      total ? rows.reduce((sum, r) => sum + (r[k] || 0), 0) / total : 0
+    const avgOverall = avg('overall_rating')
+    const avgCulture = avg('culture_rating')
+    const avgInterview = avg('interview_rating')
 
     await supabaseAdmin
       .from('companies')

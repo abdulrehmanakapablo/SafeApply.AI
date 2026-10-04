@@ -1,10 +1,8 @@
 // FILE: src/api/reports.ts
 // PURPOSE: Frontend API client for /api/reports/*
-// BACKEND: apps/backend/src/routes/reports.ts
 
 import api from '../lib/axios'
 
-// ─── Extracted JD ─────────────────────────────────────────
 export interface ExtractedJD {
   role: string | null
   seniority: string | null
@@ -19,7 +17,6 @@ export interface ExtractedJD {
   company_name: string | null
 }
 
-// ─── News ────────────────────────────────────────────────
 export interface NewsArticle {
   title: string
   source: string
@@ -32,7 +29,6 @@ export interface NewsData {
   source_url: string
 }
 
-// ─── GitHub ──────────────────────────────────────────────
 export interface GitHubData {
   org_found: boolean
   public_repos: number
@@ -41,7 +37,6 @@ export interface GitHubData {
   source_url: string
 }
 
-// ─── Ghost posting ───────────────────────────────────────
 export interface GhostPosting {
   date: string
   platform: string
@@ -53,29 +48,25 @@ export interface GhostPostingData {
   source_url: string
 }
 
-// ─── Glassdoor ───────────────────────────────────────────
-export interface GlassdoorData {
-  overall_rating: number | null
-  interview_difficulty: string | null
-  offer_rate: number | null
-  recommend_percent: number | null
-  source_url: string
-}
-
-// ─── Full report ─────────────────────────────────────────
 export interface ReportData {
   extracted_jd?: ExtractedJD | null
   news?: NewsData
   github?: GitHubData
   ghost_posting?: GhostPostingData
-  glassdoor?: GlassdoorData | null
 }
 
 export interface CompanyReport {
-  id: string
+  id: string | null
   company_name: string
   job_title: string | null
   report_data: ReportData
+  created_at: string
+}
+
+export interface ReportListItem {
+  id: string
+  company_name: string
+  job_title: string | null
   created_at: string
 }
 
@@ -87,7 +78,7 @@ export interface ReportResponse {
 
 export interface ReportListResponse {
   success: boolean
-  data: CompanyReport[]
+  data: ReportListItem[]
   total: number
   page: number
   limit: number
@@ -100,30 +91,32 @@ export interface RunReportPayload {
   job_title?: string
 }
 
-// POST /api/reports — run a new report
-export async function runReport(
-  payload: RunReportPayload
-): Promise<ReportResponse> {
-  const res = await api.post<ReportResponse>('/reports', payload)
+export async function runReport(payload: RunReportPayload): Promise<ReportResponse> {
+  const res = await api.post<ReportResponse>('/reports', payload, { timeout: 60_000 })
   return res.data
 }
 
-// GET /api/reports/history
-export async function getReportHistory(params?: {
-  page?: number
-}): Promise<ReportListResponse> {
+export async function getReportHistory(params?: { page?: number }): Promise<ReportListResponse> {
   const res = await api.get<ReportListResponse>('/reports/history', { params })
   return res.data
 }
 
-// GET /api/reports/:id
 export async function getReport(id: string): Promise<ReportResponse> {
   const res = await api.get<ReportResponse>(`/reports/${id}`)
   return res.data
 }
 
-// DELETE /api/reports/:id
 export async function deleteReport(id: string) {
   const res = await api.delete(`/reports/${id}`)
+  return res.data as { success: boolean; error?: string }
+}
+
+/** Anonymous landing-page demo. One per IP per day in production. */
+export async function demoExtract(jd_text: string) {
+  const res = await api.post<{ success: boolean; data?: { extracted_jd: ExtractedJD }; error?: string; code?: string }>(
+    '/reports/demo-extract',
+    { jd_text },
+    { timeout: 45_000 },
+  )
   return res.data
 }

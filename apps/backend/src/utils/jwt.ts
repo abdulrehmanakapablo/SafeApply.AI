@@ -1,9 +1,9 @@
 // ============================================================
 // FILE: apps/backend/src/utils/jwt.ts
-// PURPOSE: JWT token generation and verification helpers
-// Access token: 15 minutes — short lived for security
-// Refresh token: 7 days — rotated on every use
-// Payload contains only non-sensitive user identifiers
+// PURPOSE: JWT helpers. Algorithm pinned to HS256 (blocks "alg: none" and
+//          algorithm-confusion tricks), issuer + audience checked, and the
+//          two token types can't be swapped for each other.
+// Access token: 15 minutes. Refresh token: 7 days, rotated on every use.
 // ============================================================
 
 import jwt from 'jsonwebtoken'
@@ -18,38 +18,36 @@ interface TokenPayload {
 interface JwtPayload extends TokenPayload {
   iat: number
   exp: number
+  typ?: 'access' | 'refresh'
 }
 
-// Generate a short-lived access token — 15 minutes
+const ISSUER = 'safeapply-api'
+const AUDIENCE = 'safeapply-app'
+const ALG = 'HS256' as const
+
 export function generateAccessToken(payload: TokenPayload): string {
-  return jwt.sign(payload, env.jwtSecret, { expiresIn: '15m' })
+  return jwt.sign({ ...payload, typ: 'access' }, env.jwtSecret, { algorithm: ALG, expiresIn: '15m', issuer: ISSUER, audience: AUDIENCE })
 }
 
-// Generate a long-lived refresh token — 7 days
 export function generateRefreshToken(payload: TokenPayload): string {
-  return jwt.sign(payload, env.jwtRefreshSecret, { expiresIn: '7d' })
+  return jwt.sign({ ...payload, typ: 'refresh' }, env.jwtRefreshSecret, { algorithm: ALG, expiresIn: '7d', issuer: ISSUER, audience: AUDIENCE })
 }
 
-// Verify an access token — throws specific errors on failure
+function verify(token: string, secret: string, typ: 'access' | 'refresh'): JwtPayload {
+  try {
+    const p = jwt.verify(token, secret, { algorithms: [ALG], issuer: ISSUER, audience: AUDIENCE }) as JwtPayload
+    if (p.typ !== typ || typeof p.userId !== 'string') throw new Error('TOKEN_INVALID')
+    return p
+  } catch (error) {
+    if (error instanceof jwt.TokenExpiredError) throw new Error('TOKEN_EXPIRED')
+    throw new Error('TOKEN_INVALID')
+  }
+}
+
 export function verifyAccessToken(token: string): JwtPayload {
-  try {
-    return jwt.verify(token, env.jwtSecret) as JwtPayload
-  } catch (error) {
-    if (error instanceof jwt.TokenExpiredError) {
-      throw new Error('TOKEN_EXPIRED')
-    }
-    throw new Error('TOKEN_INVALID')
-  }
+  return verify(token, env.jwtSecret, 'access')
 }
 
-// Verify a refresh token — throws specific errors on failure
 export function verifyRefreshToken(token: string): JwtPayload {
-  try {
-    return jwt.verify(token, env.jwtRefreshSecret) as JwtPayload
-  } catch (error) {
-    if (error instanceof jwt.TokenExpiredError) {
-      throw new Error('TOKEN_EXPIRED')
-    }
-    throw new Error('TOKEN_INVALID')
-  }
+  return verify(token, env.jwtRefreshSecret, 'refresh')
 }

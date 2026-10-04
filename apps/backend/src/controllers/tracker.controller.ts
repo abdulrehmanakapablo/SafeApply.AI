@@ -1,14 +1,15 @@
 // ============================================================
 // FILE: apps/backend/src/controllers/tracker.controller.ts
-// PURPOSE: Job application tracker CRUD operations
+// PURPOSE: Job application tracker CRUD.
+// Enforces 10 free applications per user (until paid plans ship).
 // ============================================================
 
 import { Request, Response } from 'express'
 import { supabaseAdmin } from '../config/supabase'
-import { sanitizeObject } from '../utils/sanitize'
+import { checkFreeLimit, sendLimitError } from '../utils/usage'
+import { sanitizeObject, safeSearchTerm, pageParam } from '../utils/sanitize'
 import { sendSuccess, sendError, sendPaginated } from '../utils/response'
 
-// ─── Helpers ──────────────────────────────────────────────
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -16,18 +17,21 @@ function isValidUuid(value: unknown): value is string {
   return typeof value === 'string' && UUID_RE.test(value)
 }
 
+const STATUSES = new Set(['saved', 'applied', 'screening', 'interviewing', 'offered', 'rejected', 'ghosted'])
 const MAX_LIMIT = 100
 const DEFAULT_LIMIT = 20
 
 // ─── GET ALL APPLICATIONS ─────────────────────────────────
 export async function getApplications(req: Request, res: Response): Promise<void> {
   try {
-    const page = Math.max(1, parseInt(req.query.page as string) || 1)
+    const page = pageParam(req.query.page)
     const requestedLimit = parseInt(req.query.limit as string) || DEFAULT_LIMIT
     const limit = Math.min(Math.max(1, requestedLimit), MAX_LIMIT)
     const offset = (page - 1) * limit
-    const status = req.query.status as string
-    const search = req.query.search as string
+    const status = String(req.query.status ?? '')
+    // Search text goes into a PostgREST filter string; strip its syntax chars
+    // so it can't add or change filter clauses.
+    const search = safeSearchTerm(req.query.search)
 
     let query = supabaseAdmin
       .from('applications')
@@ -35,13 +39,13 @@ export async function getApplications(req: Request, res: Response): Promise<void
       .eq('user_id', req.user!.userId)
       .order('created_at', { ascending: false })
 
-    if (status && status !== 'all') {
+    if (status && STATUSES.has(status)) {
       query = query.eq('status', status)
     }
 
     if (search) {
       query = query.or(
-        `company_name.ilike.%${search}%,job_title.ilike.%${search}%`
+        `company_name.ilike.%${search}%,job_title.ilike.%${search}%`,
       )
     }
 
@@ -52,7 +56,18 @@ export async function getApplications(req: Request, res: Response): Promise<void
       return
     }
 
-    sendPaginated(res, data || [], count || 0, page, limit)
+    // Read receipts for applications sent through the SafeApply job board.
+    const linked = (data || []).filter((a) => a.job_application_id).map((a) => a.job_application_id as string)
+    const receipts: Record<string, { cv_opened_at: string | null; first_response_at: string | null; no_response: boolean; stage: string }> = {}
+    if (linked.length) {
+      const { data: rows } = await supabaseAdmin
+        .from('job_applications')
+        .select('id, cv_opened_at, first_response_at, no_response, stage')
+        .in('id', linked)
+        .eq('user_id', req.user!.userId)
+      for (const r of rows || []) receipts[r.id] = { cv_opened_at: r.cv_opened_at, first_response_at: r.first_response_at, no_response: r.no_response, stage: r.stage }
+    }
+    sendPaginated(res, (data || []).map((a) => ({ ...a, receipt: a.job_application_id ? receipts[a.job_application_id] || null : null })), count || 0, page, limit)
   } catch (error) {
     console.error('Get applications error:', error)
     sendError(res, 'Server error', 500)
@@ -62,13 +77,17 @@ export async function getApplications(req: Request, res: Response): Promise<void
 // ─── CREATE APPLICATION ───────────────────────────────────
 export async function createApplication(req: Request, res: Response): Promise<void> {
   try {
+    const limit = await checkFreeLimit(req.user!.userId, 'applications')
+    if (!limit.allowed) return sendLimitError(res, limit, 'applications')
+
     const body = sanitizeObject(req.body)
 
     const { data, error } = await supabaseAdmin
       .from('applications')
+      // user_id last so nothing in the body can override ownership.
       .insert({
-        user_id: req.user!.userId,
         ...body,
+        user_id: req.user!.userId,
       })
       .select()
       .single()
@@ -79,7 +98,6 @@ export async function createApplication(req: Request, res: Response): Promise<vo
       return
     }
 
-    // Log initial status to timeline
     await supabaseAdmin.from('application_timeline').insert({
       application_id: data.id,
       status: data.status,
@@ -97,8 +115,6 @@ export async function getApplication(req: Request, res: Response): Promise<void>
   try {
     const { id } = req.params
 
-    // Reject malformed IDs before hitting the DB — saves a round-trip
-    // and gives a clearer error than a generic 404.
     if (!isValidUuid(id)) {
       sendError(res, 'Invalid application id', 400)
       return
@@ -116,7 +132,6 @@ export async function getApplication(req: Request, res: Response): Promise<void>
       return
     }
 
-    // Also fetch timeline and communication log
     const [timelineResult, commResult] = await Promise.all([
       supabaseAdmin
         .from('application_timeline')
@@ -152,7 +167,6 @@ export async function updateApplication(req: Request, res: Response): Promise<vo
       return
     }
 
-    // First get current application to check status change
     const { data: current } = await supabaseAdmin
       .from('applications')
       .select('status')
@@ -167,7 +181,7 @@ export async function updateApplication(req: Request, res: Response): Promise<vo
 
     const { data, error } = await supabaseAdmin
       .from('applications')
-      .update({ ...body, updated_at: new Date().toISOString() })
+      .update({ ...body, user_id: req.user!.userId, updated_at: new Date().toISOString() })
       .eq('id', id)
       .eq('user_id', req.user!.userId)
       .select()
@@ -179,7 +193,6 @@ export async function updateApplication(req: Request, res: Response): Promise<vo
       return
     }
 
-    // Log status change to timeline if status changed
     if (body.status && body.status !== current.status) {
       await supabaseAdmin.from('application_timeline').insert({
         application_id: id,
@@ -234,7 +247,6 @@ export async function addCommunication(req: Request, res: Response): Promise<voi
       return
     }
 
-    // Verify user owns this application
     const { data: app } = await supabaseAdmin
       .from('applications')
       .select('id')

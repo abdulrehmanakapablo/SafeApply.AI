@@ -18,6 +18,8 @@ export const signupSchema = Joi.object({
       'any.required': 'Email is required',
     }),
   phone: Joi.string().trim().min(7).max(20).optional().allow(''),
+  // 'admin' can never be requested here.
+  role: Joi.string().valid('user', 'recruiter', 'freelancer', 'client').default('user'),
   password: Joi.string().min(8).max(128).required().messages({
     'string.min': 'Password must be at least 8 characters',
     'any.required': 'Password is required',

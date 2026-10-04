@@ -2,15 +2,18 @@
 // Renders a single blog post by slug with full SEO metadata.
 // 404 fallback if slug not found.
 
+import type { ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import SEO, { SITE_URL, SITE_NAME } from '../../components/SEO'
+import PublicLayout from '../../components/layout/PublicLayout'
+import { ButtonLink, Icon } from '../../components/ui'
 import { BLOG_POSTS } from '../../data/blogPosts'
 
 // ── Markdown-lite renderer ─────────────────────────────────
 // Supports: paragraphs, ## H2, ### H3, - bullets, 1. numbered, > quotes
 // Inline: **bold**, *italic*, `code`
-function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
-  const nodes: React.ReactNode[] = []
+function renderInline(text: string, keyPrefix: string): ReactNode[] {
+  const nodes: ReactNode[] = []
   // Combined regex for bold, italic, code
   const regex = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g
   const parts = text.split(regex)
@@ -18,12 +21,12 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
     if (!part) return
     const key = `${keyPrefix}-${i}`
     if (part.startsWith('**') && part.endsWith('**')) {
-      nodes.push(<strong key={key} className="text-white font-semibold">{part.slice(2, -2)}</strong>)
+      nodes.push(<strong key={key} className="text-fg font-semibold">{part.slice(2, -2)}</strong>)
     } else if (part.startsWith('*') && part.endsWith('*')) {
       nodes.push(<em key={key}>{part.slice(1, -1)}</em>)
     } else if (part.startsWith('`') && part.endsWith('`')) {
       nodes.push(
-        <code key={key} className="rounded bg-[#1A1A1A] px-1.5 py-0.5 text-[0.9em] text-[#22C55E]">
+        <code key={key} className="rounded bg-line px-1.5 py-0.5 text-[0.9em] text-accent">
           {part.slice(1, -1)}
         </code>
       )
@@ -34,9 +37,9 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
   return nodes
 }
 
-function renderContent(content: string): React.ReactNode[] {
+function renderContent(content: string): ReactNode[] {
   const lines = content.split('\n')
-  const blocks: React.ReactNode[] = []
+  const blocks: ReactNode[] = []
   let i = 0
   let key = 0
 
@@ -52,7 +55,7 @@ function renderContent(content: string): React.ReactNode[] {
     // H2
     if (line.startsWith('## ')) {
       blocks.push(
-        <h2 key={`h2-${key++}`} className="mt-12 mb-4 text-2xl font-bold tracking-tight text-white">
+        <h2 key={`h2-${key++}`} className="mt-14 mb-4 text-2xl font-semibold tracking-tight text-fg">
           {renderInline(line.slice(3), `h2i-${key}`)}
         </h2>
       )
@@ -63,7 +66,7 @@ function renderContent(content: string): React.ReactNode[] {
     // H3
     if (line.startsWith('### ')) {
       blocks.push(
-        <h3 key={`h3-${key++}`} className="mt-8 mb-3 text-lg font-semibold text-white">
+        <h3 key={`h3-${key++}`} className="mt-8 mb-3 text-lg font-semibold text-fg">
           {renderInline(line.slice(4), `h3i-${key}`)}
         </h3>
       )
@@ -81,7 +84,7 @@ function renderContent(content: string): React.ReactNode[] {
       blocks.push(
         <ul key={`ul-${key++}`} className="my-4 space-y-2 pl-6">
           {items.map((item, idx) => (
-            <li key={idx} className="list-disc text-[#737373] leading-relaxed">
+            <li key={idx} className="list-disc text-fg/80 leading-relaxed">
               {renderInline(item, `uli-${key}-${idx}`)}
             </li>
           ))}
@@ -100,7 +103,7 @@ function renderContent(content: string): React.ReactNode[] {
       blocks.push(
         <ol key={`ol-${key++}`} className="my-4 space-y-2 pl-6">
           {items.map((item, idx) => (
-            <li key={idx} className="list-decimal text-[#737373] leading-relaxed">
+            <li key={idx} className="list-decimal text-fg/80 leading-relaxed">
               {renderInline(item, `oli-${key}-${idx}`)}
             </li>
           ))}
@@ -119,7 +122,7 @@ function renderContent(content: string): React.ReactNode[] {
       blocks.push(
         <blockquote
           key={`bq-${key++}`}
-          className="my-6 border-l-2 border-[#22C55E] bg-[#0D0D0D] py-3 pl-5 pr-4 italic text-[#737373]"
+          className="my-6 border-l-2 border-accent bg-surface py-3 pl-5 pr-4 italic text-muted"
         >
           {quotes.map((q, idx) => (
             <p key={idx}>{renderInline(q, `bqi-${key}-${idx}`)}</p>
@@ -145,7 +148,7 @@ function renderContent(content: string): React.ReactNode[] {
       i++
     }
     blocks.push(
-      <p key={`p-${key++}`} className="my-4 text-base leading-relaxed text-[#737373]">
+      <p key={`p-${key++}`} className="my-5 text-[17px] leading-[1.75] text-fg/80">
         {renderInline(paraLines.join(' '), `pi-${key}`)}
       </p>
     )
@@ -169,7 +172,7 @@ export default function BlogPost() {
   // 404 fallback — no SEO, no content
   if (!post) {
     return (
-      <div className="min-h-screen bg-black text-white">
+      <PublicLayout>
         <SEO
           title="Post not found | SafeApply.AI"
           description="The requested blog post could not be found."
@@ -177,18 +180,13 @@ export default function BlogPost() {
           noindex
         />
         <div className="mx-auto max-w-3xl px-6 py-24 text-center">
-          <h1 className="text-4xl font-bold tracking-tight">Post not found</h1>
-          <p className="mt-4 text-[#737373]">
-            This article does not exist or has been moved.
-          </p>
-          <Link
-            to="/blog"
-            className="mt-8 inline-block rounded-lg bg-[#22C55E] px-6 py-3 font-medium text-black transition-colors hover:bg-[#16A34A]"
-          >
-            Back to blog
-          </Link>
+          <h1 className="text-4xl font-semibold tracking-tight">That post isn’t here</h1>
+          <p className="mt-4 text-muted">It may have been renamed or removed.</p>
+          <ButtonLink to="/blog" className="mt-8">
+            All posts
+          </ButtonLink>
         </div>
-      </div>
+      </PublicLayout>
     )
   }
 
@@ -226,7 +224,7 @@ export default function BlogPost() {
   }
 
   return (
-    <div className="min-h-screen bg-black text-white">
+    <PublicLayout>
       <SEO
         title={`${post.title} | ${SITE_NAME}`}
         description={post.excerpt}
@@ -239,35 +237,23 @@ export default function BlogPost() {
         jsonLd={[articleJsonLd, breadcrumbJsonLd]}
       />
 
-      <article className="mx-auto max-w-3xl px-6 py-16">
+      <article className="mx-auto max-w-[44rem] px-4 sm:px-6 pt-12 sm:pt-16 pb-20">
         {/* Breadcrumb */}
-        <nav aria-label="Breadcrumb" className="mb-8 text-xs text-[#737373]">
-          <Link to="/" className="hover:text-white transition-colors">Home</Link>
-          <span className="mx-2">/</span>
-          <Link to="/blog" className="hover:text-white transition-colors">Blog</Link>
+        <nav aria-label="Breadcrumb" className="mb-8 text-xs text-muted">
+          <Link to="/" className="hover:text-fg transition-colors">Home</Link>
+          <Icon name="chevron_right" className="text-[14px] mx-1 align-middle" />
+          <Link to="/blog" className="hover:text-fg transition-colors">Blog</Link>
         </nav>
 
         {/* Header */}
-        <header className="border-b border-[#1A1A1A] pb-8">
-          <div className="mb-4 flex flex-wrap gap-2">
-            {post.tags.map((t) => (
-              <span
-                key={t}
-                className="rounded-full border border-[#1A1A1A] px-2.5 py-0.5 text-xs text-[#737373]"
-              >
-                {t}
-              </span>
-            ))}
-          </div>
-          <h1 className="text-3xl font-bold tracking-tight leading-tight sm:text-4xl">
+        <header className="border-b border-line pb-8">
+          <h1 className="text-3xl font-semibold tracking-[-0.025em] leading-[1.12] sm:text-[42px]">
             {post.title}
           </h1>
-          <p className="mt-4 text-lg text-[#737373] leading-relaxed">{post.excerpt}</p>
-          <div className="mt-6 flex items-center gap-3 text-sm text-[#737373]">
-            <span>{post.author}</span>
-            <span className="text-white/20">•</span>
+          <p className="mt-5 text-lg text-muted leading-relaxed">{post.excerpt}</p>
+          <div className="mt-6 flex items-center gap-3 text-sm text-muted">
             <time dateTime={post.date}>{formatDate(post.date)}</time>
-            <span className="text-white/20">•</span>
+            <span aria-hidden>·</span>
             <span>{post.readTime} min read</span>
           </div>
         </header>
@@ -276,38 +262,34 @@ export default function BlogPost() {
         <div className="mt-2">{renderContent(post.content)}</div>
 
         {/* Divider */}
-        <div className="my-12 h-px bg-[#1A1A1A]" />
+        <div className="my-12 h-px bg-line" />
 
         {/* CTA */}
-        <div className="rounded-[16px] border border-[#22C55E]/30 bg-[#0D0D0D] p-8 text-center">
-          <h2 className="text-2xl font-bold tracking-tight">Research before you apply</h2>
-          <p className="mx-auto mt-3 max-w-md text-sm text-[#737373]">
-            Paste one job description and see what a cited company report looks like. Free, no
-            credit card.
-          </p>
-          <Link
-            to="/signup"
-            className="mt-6 inline-block rounded-lg bg-[#22C55E] px-6 py-3 font-medium text-black transition-colors hover:bg-[#16A34A]"
-          >
-            Get started free
-          </Link>
+        <div className="rounded-[16px] border border-line bg-surface p-6 sm:p-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-5">
+          <div>
+            <h2 className="text-xl font-semibold tracking-tight">Run this check automatically</h2>
+            <p className="mt-1.5 text-sm text-muted max-w-[44ch]">Paste a job post and get news, code activity and repeat postings in one report.</p>
+          </div>
+          <ButtonLink to="/signup" iconRight="arrow_forward" className="shrink-0">
+            Start free
+          </ButtonLink>
         </div>
 
         {/* Related */}
         {related.length > 0 && (
           <section className="mt-16">
-            <h2 className="mb-6 text-xl font-semibold">Related reading</h2>
+            <h2 className="mb-6 text-xl font-semibold">Keep reading</h2>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {related.map((p) => (
                 <Link
                   key={p.slug}
                   to={`/blog/${p.slug}`}
-                  className="group rounded-[16px] border border-[#1A1A1A] bg-[#0D0D0D] p-5 transition-colors hover:border-[#22C55E]"
+                  className="group rounded-[16px] border border-line bg-surface p-5 transition-colors hover:border-accent"
                 >
-                  <h3 className="text-sm font-semibold leading-snug group-hover:text-[#22C55E]">
+                  <h3 className="text-sm font-semibold leading-snug group-hover:text-accent">
                     {p.title}
                   </h3>
-                  <p className="mt-2 line-clamp-2 text-xs text-[#737373]">{p.excerpt}</p>
+                  <p className="mt-2 line-clamp-2 text-xs text-muted">{p.excerpt}</p>
                 </Link>
               ))}
             </div>
@@ -318,12 +300,12 @@ export default function BlogPost() {
         <div className="mt-12 text-center">
           <Link
             to="/blog"
-            className="text-sm text-[#737373] transition-colors hover:text-white"
+            className="text-sm text-muted transition-colors hover:text-fg"
           >
-            ← Back to all posts
+            All posts
           </Link>
         </div>
       </article>
-    </div>
+    </PublicLayout>
   )
 }

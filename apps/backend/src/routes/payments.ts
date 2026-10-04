@@ -4,8 +4,8 @@
 // TODO: Uncomment everything below when ready to add billing
 // ============================================================
 
-import { Router } from 'express'
-const router = Router()
+import { Router, type Router as RouterType } from 'express'
+const router: RouterType = Router()
 
 // All payment routes commented out until paywall is implemented
 // import { authMiddleware } from '../middleware/auth'

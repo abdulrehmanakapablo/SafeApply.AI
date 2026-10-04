@@ -5,7 +5,7 @@
 
 import { Link } from 'react-router-dom'
 import SEO, { SITE_URL, SITE_NAME } from '../../components/SEO'
-import Logo from '../../components/ui/Logo'
+import PublicLayout from '../../components/layout/PublicLayout'
 
 const LAST_UPDATED = 'January 2025'
 const CONTACT_EMAIL = 'legal@safeapply.ai'
@@ -40,7 +40,7 @@ export default function Terms() {
   }
 
   return (
-    <div className="min-h-screen bg-black text-white">
+    <PublicLayout>
       <SEO
         title={`Terms of Service | ${SITE_NAME}`}
         description={`Terms of Service governing use of ${SITE_NAME}. Includes user content, aggregated data disclaimers, AI output limitations, and dispute resolution.`}
@@ -48,28 +48,12 @@ export default function Terms() {
         jsonLd={jsonLd}
       />
 
-      {/* Header — logo left, back to website right */}
-      <header className="w-full max-w-[80rem] mx-auto px-6 py-5 flex items-center justify-between">
-        <Link to="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
-          <Logo className="h-8 w-auto" />
-        </Link>
-        <Link
-          to="/"
-          className="flex items-center gap-1 text-[#737373] hover:text-white transition-colors text-xs font-semibold uppercase tracking-wider"
-        >
-          <span className="material-symbols-outlined text-[16px]">arrow_back</span>
-          Back to website
-        </Link>
-      </header>
 
       {/* Hero */}
-      <section className="border-b border-[#1A1A1A]">
+      <section className="border-b border-line">
         <div className="mx-auto max-w-4xl px-6 py-16">
-          <p className="mb-3 text-sm font-medium uppercase tracking-widest text-[#22C55E]">
-            Legal
-          </p>
-          <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">Terms of Service</h1>
-          <p className="mt-4 text-sm text-[#737373]">
+                    <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">Terms of Service</h1>
+          <p className="mt-4 text-sm text-muted">
             Last updated: {LAST_UPDATED}
           </p>
         </div>
@@ -79,7 +63,7 @@ export default function Terms() {
         {/* Table of contents */}
         <aside className="mb-10 lg:mb-0">
           <div className="lg:sticky lg:top-24">
-            <h2 className="mb-4 text-xs font-semibold uppercase tracking-widest text-[#737373]">
+            <h2 className="mb-4 text-sm text-muted">
               On this page
             </h2>
             <nav aria-label="Table of contents" className="space-y-2">
@@ -87,7 +71,7 @@ export default function Terms() {
                 <a
                   key={s.id}
                   href={`#${s.id}`}
-                  className="block text-sm text-[#737373] transition-colors hover:text-[#22C55E]"
+                  className="block text-sm text-muted transition-colors hover:text-accent"
                 >
                   {s.title}
                 </a>
@@ -99,22 +83,22 @@ export default function Terms() {
         {/* Content */}
         <article className="max-w-3xl space-y-12">
           <section>
-            <p className="text-base leading-relaxed text-[#737373]">
-              These Terms of Service (the &ldquo;<strong className="text-white">Terms</strong>&rdquo;)
+            <p className="text-base leading-relaxed text-muted">
+              These Terms of Service (the &ldquo;<strong className="text-fg">Terms</strong>&rdquo;)
               constitute a legally binding agreement between you (&ldquo;
-              <strong className="text-white">you</strong>&rdquo; or &ldquo;
-              <strong className="text-white">User</strong>&rdquo;) and{' '}
-              <strong className="text-white">{SITE_NAME}</strong> (&ldquo;
-              <strong className="text-white">SafeApply</strong>, &ldquo;
-              <strong className="text-white">we</strong>,&rdquo; &ldquo;
-              <strong className="text-white">us</strong>,&rdquo; or &ldquo;
-              <strong className="text-white">our</strong>&rdquo;), governing your access to and use
+              <strong className="text-fg">you</strong>&rdquo; or &ldquo;
+              <strong className="text-fg">User</strong>&rdquo;) and{' '}
+              <strong className="text-fg">{SITE_NAME}</strong> (&ldquo;
+              <strong className="text-fg">SafeApply</strong>, &ldquo;
+              <strong className="text-fg">we</strong>,&rdquo; &ldquo;
+              <strong className="text-fg">us</strong>,&rdquo; or &ldquo;
+              <strong className="text-fg">our</strong>&rdquo;), governing your access to and use
               of the SafeApply.AI website, applications, and services (collectively, the &ldquo;
-              <strong className="text-white">Service</strong>&rdquo;).
+              <strong className="text-fg">Service</strong>&rdquo;).
             </p>
-            <p className="mt-4 text-base leading-relaxed text-[#737373]">
+            <p className="mt-4 text-base leading-relaxed text-muted">
               By accessing or using the Service, you confirm that you have read, understood, and
-              agreed to be bound by these Terms. <strong className="text-white">If you do not
+              agreed to be bound by these Terms. <strong className="text-fg">If you do not
               agree, you must not use the Service.</strong>
             </p>
           </section>
@@ -122,9 +106,9 @@ export default function Terms() {
           {/* 1 */}
           <section id="acceptance" className="scroll-mt-24">
             <h2 className="mb-4 text-2xl font-bold tracking-tight">1. Acceptance of These Terms</h2>
-            <p className="text-base leading-relaxed text-[#737373]">
+            <p className="text-base leading-relaxed text-muted">
               Your use of the Service constitutes acceptance of these Terms and of our{' '}
-              <Link to="/privacy" className="text-[#22C55E] hover:underline">
+              <Link to="/privacy" className="text-accent hover:underline">
                 Privacy Policy
               </Link>
               , which is incorporated into these Terms by reference. If you are using the Service on
@@ -137,17 +121,17 @@ export default function Terms() {
           {/* 2 */}
           <section id="service" className="scroll-mt-24">
             <h2 className="mb-4 text-2xl font-bold tracking-tight">2. Description of the Service</h2>
-            <p className="text-base leading-relaxed text-[#737373]">
+            <p className="text-base leading-relaxed text-muted">
               The Service is an information aggregation and productivity platform for job seekers.
               It collects, organizes, and displays:
             </p>
-            <ul className="mt-4 list-disc space-y-2 pl-6 text-[#737373]">
+            <ul className="mt-4 list-disc space-y-2 pl-6 text-muted">
               <li>Publicly available information about companies obtained from third-party sources;</li>
               <li>Anonymous, user-submitted reviews and ratings of companies;</li>
               <li>Output generated by third-party artificial intelligence models; and</li>
               <li>Tools for CV analysis, application tracking, and related workflow management.</li>
             </ul>
-            <p className="mt-4 text-base leading-relaxed text-[#737373]">
+            <p className="mt-4 text-base leading-relaxed text-muted">
               The Service is a neutral conduit and host for information. We do not create,
               author, verify, endorse, or guarantee the accuracy of any content aggregated from
               third-party sources or submitted by Users.
@@ -159,17 +143,17 @@ export default function Terms() {
             <h2 className="mb-4 text-2xl font-bold tracking-tight">
               3. Eligibility and Accounts
             </h2>
-            <p className="text-base leading-relaxed text-[#737373]">
-              You must be at least <strong className="text-white">sixteen (16) years of age</strong>{' '}
+            <p className="text-base leading-relaxed text-muted">
+              You must be at least <strong className="text-fg">sixteen (16) years of age</strong>{' '}
               to use the Service. By using the Service, you represent and warrant that you meet this
               requirement. If you are under the age of majority in your jurisdiction, you represent
               that you have obtained consent from a parent or legal guardian.
             </p>
-            <p className="mt-4 text-base leading-relaxed text-[#737373]">
+            <p className="mt-4 text-base leading-relaxed text-muted">
               You are responsible for (a) maintaining the confidentiality of your account
               credentials; (b) all activity that occurs under your account; and (c) providing
               accurate, current, and complete information. You agree to notify us immediately at{' '}
-              <a href={`mailto:${CONTACT_EMAIL}`} className="text-[#22C55E] hover:underline">
+              <a href={`mailto:${CONTACT_EMAIL}`} className="text-accent hover:underline">
                 {CONTACT_EMAIL}
               </a>{' '}
               of any unauthorized use of your account.
@@ -179,10 +163,10 @@ export default function Terms() {
           {/* 4 */}
           <section id="acceptable-use" className="scroll-mt-24">
             <h2 className="mb-4 text-2xl font-bold tracking-tight">4. Acceptable Use</h2>
-            <p className="text-base leading-relaxed text-[#737373]">
+            <p className="text-base leading-relaxed text-muted">
               You agree not to, and not to permit any third party to:
             </p>
-            <ul className="mt-4 list-disc space-y-2 pl-6 text-[#737373]">
+            <ul className="mt-4 list-disc space-y-2 pl-6 text-muted">
               <li>Use the Service for any unlawful, infringing, or fraudulent purpose;</li>
               <li>Post content that is defamatory, harassing, discriminatory, obscene, or that violates the rights of any third party;</li>
               <li>Post content that contains confidential or proprietary information that you are not authorized to disclose;</li>
@@ -200,27 +184,27 @@ export default function Terms() {
             <h2 className="mb-4 text-2xl font-bold tracking-tight">
               5. User-Generated Content and Reviews
             </h2>
-            <p className="text-base leading-relaxed text-[#737373]">
+            <p className="text-base leading-relaxed text-muted">
               The Service permits Users to submit reviews, ratings, comments, and other content
-              (&ldquo;<strong className="text-white">User Content</strong>&rdquo;). You retain
+              (&ldquo;<strong className="text-fg">User Content</strong>&rdquo;). You retain
               ownership of your User Content. However, by submitting User Content, you grant
               SafeApply a worldwide, non-exclusive, royalty-free, sublicensable, and transferable
               license to host, store, display, reproduce, modify for formatting purposes,
               distribute, and otherwise use your User Content in connection with operating,
               improving, and promoting the Service.
             </p>
-            <p className="mt-4 text-base leading-relaxed text-[#737373]">
+            <p className="mt-4 text-base leading-relaxed text-muted">
               You represent and warrant that:
             </p>
-            <ul className="mt-4 list-disc space-y-2 pl-6 text-[#737373]">
+            <ul className="mt-4 list-disc space-y-2 pl-6 text-muted">
               <li>You are the sole author of your User Content, or have all necessary rights to submit it;</li>
               <li>Your User Content is your genuine personal opinion and reflects your actual experience;</li>
               <li>Your User Content does not contain false statements of material fact, and where it contains statements of opinion, it clearly expresses opinion rather than fact;</li>
               <li>Your User Content does not infringe any copyright, trademark, trade secret, privacy right, or other right of any third party; and</li>
               <li>Your User Content complies with these Terms and all applicable laws.</li>
             </ul>
-            <p className="mt-4 text-base leading-relaxed text-[#737373]">
-              <strong className="text-white">
+            <p className="mt-4 text-base leading-relaxed text-muted">
+              <strong className="text-fg">
                 SafeApply is a neutral host of User Content and is not the publisher or speaker of
                 any User Content.
               </strong>{' '}
@@ -232,7 +216,7 @@ export default function Terms() {
               SafeApply shall not be treated as the publisher or speaker of any User Content and
               shall not be liable for any User Content submitted by any User.
             </p>
-            <p className="mt-4 text-base leading-relaxed text-[#737373]">
+            <p className="mt-4 text-base leading-relaxed text-muted">
               We reserve the right, but have no obligation, to review, screen, moderate, refuse,
               remove, or edit any User Content at any time for any reason, including content we
               believe in good faith violates these Terms or applicable law.
@@ -244,18 +228,18 @@ export default function Terms() {
             <h2 className="mb-4 text-2xl font-bold tracking-tight">
               6. Aggregated Third-Party Data
             </h2>
-            <p className="text-base leading-relaxed text-[#737373]">
+            <p className="text-base leading-relaxed text-muted">
               The Service aggregates and displays information obtained from publicly available
               third-party sources, including (without limitation) news publications, search
               engines, public code hosting platforms, and review platforms. This information
-              (&ldquo;<strong className="text-white">Aggregated Data</strong>&rdquo;) is provided to
+              (&ldquo;<strong className="text-fg">Aggregated Data</strong>&rdquo;) is provided to
               you strictly on an &ldquo;as is&rdquo; and &ldquo;as available&rdquo; basis, solely for
               your informational convenience.
             </p>
-            <p className="mt-4 text-base leading-relaxed text-[#737373]">
+            <p className="mt-4 text-base leading-relaxed text-muted">
               You acknowledge and agree that:
             </p>
-            <ul className="mt-4 list-disc space-y-2 pl-6 text-[#737373]">
+            <ul className="mt-4 list-disc space-y-2 pl-6 text-muted">
               <li>SafeApply does not control, verify, or guarantee the accuracy, completeness, timeliness, or reliability of any Aggregated Data;</li>
               <li>Aggregated Data may contain errors, omissions, outdated information, or information that has since been corrected or retracted by its original source;</li>
               <li>SafeApply is not responsible for any decisions you make or actions you take based on Aggregated Data;</li>
@@ -269,17 +253,17 @@ export default function Terms() {
             <h2 className="mb-4 text-2xl font-bold tracking-tight">
               7. Artificial Intelligence Output
             </h2>
-            <p className="text-base leading-relaxed text-[#737373]">
+            <p className="text-base leading-relaxed text-muted">
               Certain features of the Service use third-party artificial intelligence and machine
               learning models to generate summaries, extract information, suggest revisions, and
-              analyze data (&ldquo;<strong className="text-white">AI Output</strong>&rdquo;). AI
+              analyze data (&ldquo;<strong className="text-fg">AI Output</strong>&rdquo;). AI
               Output is probabilistic and may be inaccurate, incomplete, biased, or inappropriate
               for your specific situation.
             </p>
-            <p className="mt-4 text-base leading-relaxed text-[#737373]">
+            <p className="mt-4 text-base leading-relaxed text-muted">
               You acknowledge and agree that:
             </p>
-            <ul className="mt-4 list-disc space-y-2 pl-6 text-[#737373]">
+            <ul className="mt-4 list-disc space-y-2 pl-6 text-muted">
               <li>AI Output does not constitute professional, legal, financial, career, or employment advice;</li>
               <li>AI Output must be independently reviewed and verified by you before you rely on it;</li>
               <li>SafeApply makes no warranty regarding the accuracy, quality, or fitness for purpose of any AI Output; and</li>
@@ -290,7 +274,7 @@ export default function Terms() {
           {/* 8 */}
           <section id="no-advice" className="scroll-mt-24">
             <h2 className="mb-4 text-2xl font-bold tracking-tight">8. No Professional Advice</h2>
-            <p className="text-base leading-relaxed text-[#737373]">
+            <p className="text-base leading-relaxed text-muted">
               The Service is provided for informational and productivity purposes only. Nothing on
               the Service constitutes legal, financial, career, employment, or other professional
               advice. You should consult qualified professionals for advice tailored to your
@@ -302,7 +286,7 @@ export default function Terms() {
           {/* 9 */}
           <section id="ip" className="scroll-mt-24">
             <h2 className="mb-4 text-2xl font-bold tracking-tight">9. Intellectual Property</h2>
-            <p className="text-base leading-relaxed text-[#737373]">
+            <p className="text-base leading-relaxed text-muted">
               The Service, including its design, code, text, graphics, logos, and trademarks (but
               excluding User Content and Aggregated Data), is owned by SafeApply or its licensors
               and is protected by copyright, trademark, and other laws. You are granted a limited,
@@ -317,8 +301,8 @@ export default function Terms() {
             <h2 className="mb-4 text-2xl font-bold tracking-tight">
               10. Disclaimers of Warranties
             </h2>
-            <p className="text-base leading-relaxed text-[#737373]">
-              <strong className="text-white">
+            <p className="text-base leading-relaxed text-muted">
+              <strong className="text-fg">
                 THE SERVICE AND ALL CONTENT, DATA, AI OUTPUT, AND MATERIALS MADE AVAILABLE THROUGH
                 IT ARE PROVIDED &ldquo;AS IS&rdquo; AND &ldquo;AS AVAILABLE&rdquo; WITHOUT
                 WARRANTIES OF ANY KIND.
@@ -337,8 +321,8 @@ export default function Terms() {
             <h2 className="mb-4 text-2xl font-bold tracking-tight">
               11. Limitation of Liability
             </h2>
-            <p className="text-base leading-relaxed text-[#737373]">
-              <strong className="text-white">
+            <p className="text-base leading-relaxed text-muted">
+              <strong className="text-fg">
                 TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, SAFEAPPLY AND ITS OFFICERS,
                 DIRECTORS, EMPLOYEES, AGENTS, AFFILIATES, AND LICENSORS SHALL NOT BE LIABLE FOR
                 ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE DAMAGES,
@@ -347,15 +331,15 @@ export default function Terms() {
                 TO USE THE SERVICE.
               </strong>
             </p>
-            <p className="mt-4 text-base leading-relaxed text-[#737373]">
-              <strong className="text-white">
+            <p className="mt-4 text-base leading-relaxed text-muted">
+              <strong className="text-fg">
                 SAFEAPPLY&rsquo;S TOTAL AGGREGATE LIABILITY ARISING OUT OF OR RELATING TO THESE
                 TERMS OR THE SERVICE SHALL NOT EXCEED THE GREATER OF (A) ONE HUNDRED U.S. DOLLARS
                 (USD $100) OR (B) THE TOTAL AMOUNT PAID BY YOU TO SAFEAPPLY IN THE TWELVE (12)
                 MONTHS PRECEDING THE EVENT GIVING RISE TO THE CLAIM.
               </strong>
             </p>
-            <p className="mt-4 text-base leading-relaxed text-[#737373]">
+            <p className="mt-4 text-base leading-relaxed text-muted">
               Some jurisdictions do not allow the exclusion or limitation of certain warranties or
               liabilities. In such jurisdictions, the above limitations apply only to the maximum
               extent permitted by law.
@@ -365,19 +349,19 @@ export default function Terms() {
           {/* 12 */}
           <section id="indemnification" className="scroll-mt-24">
             <h2 className="mb-4 text-2xl font-bold tracking-tight">12. Indemnification</h2>
-            <p className="text-base leading-relaxed text-[#737373]">
+            <p className="text-base leading-relaxed text-muted">
               You agree to defend, indemnify, and hold harmless SafeApply and its officers,
               directors, employees, agents, affiliates, and licensors from and against any and all
               claims, actions, proceedings, demands, liabilities, damages, losses, costs, and
               expenses (including reasonable attorneys&rsquo; fees) arising out of or relating to:
             </p>
-            <ul className="mt-4 list-disc space-y-2 pl-6 text-[#737373]">
+            <ul className="mt-4 list-disc space-y-2 pl-6 text-muted">
               <li>Your access to or use of the Service;</li>
               <li>Any User Content you submit, including any claim that your User Content is defamatory, invasive of privacy, or infringes intellectual property rights;</li>
               <li>Your violation of these Terms or any applicable law; or</li>
               <li>Your violation of any rights of any third party.</li>
             </ul>
-            <p className="mt-4 text-base leading-relaxed text-[#737373]">
+            <p className="mt-4 text-base leading-relaxed text-muted">
               This indemnification obligation survives termination of these Terms and your use of
               the Service.
             </p>
@@ -388,7 +372,7 @@ export default function Terms() {
             <h2 className="mb-4 text-2xl font-bold tracking-tight">
               13. Suspension and Termination
             </h2>
-            <p className="text-base leading-relaxed text-[#737373]">
+            <p className="text-base leading-relaxed text-muted">
               We may, at our sole discretion and without notice, suspend or terminate your access
               to the Service, remove any User Content, or disable any feature if we believe you
               have violated these Terms, engaged in fraudulent or unlawful conduct, or for any
@@ -403,16 +387,16 @@ export default function Terms() {
             <h2 className="mb-4 text-2xl font-bold tracking-tight">
               14. Dispute Resolution and Arbitration
             </h2>
-            <p className="text-base leading-relaxed text-[#737373]">
-              <strong className="text-white">Informal resolution.</strong> Before filing any formal
+            <p className="text-base leading-relaxed text-muted">
+              <strong className="text-fg">Informal resolution.</strong> Before filing any formal
               proceeding, you agree to contact us at{' '}
-              <a href={`mailto:${CONTACT_EMAIL}`} className="text-[#22C55E] hover:underline">
+              <a href={`mailto:${CONTACT_EMAIL}`} className="text-accent hover:underline">
                 {CONTACT_EMAIL}
               </a>{' '}
               and attempt to resolve the dispute informally for at least thirty (30) days.
             </p>
-            <p className="mt-4 text-base leading-relaxed text-[#737373]">
-              <strong className="text-white">Binding arbitration.</strong> Except as provided
+            <p className="mt-4 text-base leading-relaxed text-muted">
+              <strong className="text-fg">Binding arbitration.</strong> Except as provided
               below, any dispute, claim, or controversy arising out of or relating to these Terms
               or the Service shall be resolved by final and binding arbitration on an individual
               basis, rather than in court. The arbitration shall be conducted in English by a
@@ -420,14 +404,14 @@ export default function Terms() {
               arbitrator&rsquo;s decision shall be final and enforceable in any court of competent
               jurisdiction.
             </p>
-            <p className="mt-4 text-base leading-relaxed text-[#737373]">
-              <strong className="text-white">Class action waiver.</strong> You and SafeApply agree
+            <p className="mt-4 text-base leading-relaxed text-muted">
+              <strong className="text-fg">Class action waiver.</strong> You and SafeApply agree
               that each may bring claims against the other only in an individual capacity, and not
               as a plaintiff or class member in any purported class, collective, or representative
               proceeding. The arbitrator may not consolidate more than one person&rsquo;s claims.
             </p>
-            <p className="mt-4 text-base leading-relaxed text-[#737373]">
-              <strong className="text-white">Exceptions.</strong> Either party may seek injunctive
+            <p className="mt-4 text-base leading-relaxed text-muted">
+              <strong className="text-fg">Exceptions.</strong> Either party may seek injunctive
               or other equitable relief in any court of competent jurisdiction to protect its
               intellectual property or confidential information.
             </p>
@@ -436,7 +420,7 @@ export default function Terms() {
           {/* 15 */}
           <section id="changes" className="scroll-mt-24">
             <h2 className="mb-4 text-2xl font-bold tracking-tight">15. Changes to These Terms</h2>
-            <p className="text-base leading-relaxed text-[#737373]">
+            <p className="text-base leading-relaxed text-muted">
               We may modify these Terms from time to time. If we make material changes, we will
               update the &ldquo;Last updated&rdquo; date at the top of this page and, where
               appropriate, provide additional notice (such as an in-app notification or email).
@@ -449,21 +433,21 @@ export default function Terms() {
           {/* 16 */}
           <section id="contact" className="scroll-mt-24">
             <h2 className="mb-4 text-2xl font-bold tracking-tight">16. Contact Information</h2>
-            <p className="text-base leading-relaxed text-[#737373]">
+            <p className="text-base leading-relaxed text-muted">
               Questions or notices regarding these Terms may be sent to:{' '}
-              <a href={`mailto:${CONTACT_EMAIL}`} className="text-[#22C55E] hover:underline">
+              <a href={`mailto:${CONTACT_EMAIL}`} className="text-accent hover:underline">
                 {CONTACT_EMAIL}
               </a>
             </p>
           </section>
 
-          <div className="mt-16 border-t border-[#1A1A1A] pt-8 text-sm text-[#737373]">
-            <Link to="/privacy" className="text-[#22C55E] hover:underline">
+          <div className="mt-16 border-t border-line pt-8 text-sm text-muted">
+            <Link to="/privacy" className="text-accent hover:underline">
               Read our Privacy Policy →
             </Link>
           </div>
         </article>
       </div>
-    </div>
+    </PublicLayout>
   )
 }

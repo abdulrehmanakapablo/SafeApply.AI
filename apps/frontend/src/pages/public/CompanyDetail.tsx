@@ -1,803 +1,491 @@
 // FILE: src/pages/public/CompanyDetail.tsx
-// ROUTE: /companies/:slug (public)
+// ROUTE: /companies/:slug
 // BACKEND: GET /api/reviews/companies/:slug
-//          GET /api/reviews/companies/:slug/reviews
+//          GET /api/reviews/companies/:slug/reviews?page
 //          POST /api/reviews/:id/helpful
+// Everything shown comes from the API. Reviewer identity is never shown.
 
-import { useState, useEffect, useMemo } from 'react'
-import { Link, useParams } from 'react-router-dom'
-import SEO from '../../components/SEO'
-import Logo from '../../components/ui/Logo'
-import { useAuthStore } from '../../store/authStore'
+import { useEffect, useMemo, useState } from 'react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import CompanyTabs from '../../components/companies/CompanyTabs'
+import SEO, { SITE_URL } from '../../components/SEO'
+import AdaptiveLayout from '../../components/layout/AdaptiveLayout'
+import { Reveal } from '../../components/motion/Reveal'
+import { Alert, Badge, Button, ButtonLink, EmptyState, Icon, Pagination, Select, Skeleton, Tabs, cn, formatDate } from '../../components/ui'
+import { Stars } from '../../components/ui/Stars'
 import {
+  RELATIONSHIP_LABEL,
   getCompany,
   getCompanyReviews,
   markReviewHelpful,
+  type CompanyListItem,
   type CompanyReview,
 } from '../../api/reviews'
+import { useIsAuthed } from '../../store/authStore'
+import { ResponseRate } from '../../components/jobs/JobBits'
+import { RecordGrid } from '../../components/jobs/HiringRecord'
+import { BadgeList, LevelChip } from '../../components/trust/TrustBits'
+import { WORK_MODE_LABEL } from '../../api/recruiter'
+import { apiError } from '../../lib/axios'
 
-// ─── Types ────────────────────────────────────────────────
-interface CompanyHeader {
-  slug: string
-  name: string
-  industry: string
-  location: string
-  review_count: number
-  overall_rating: number
-  culture_score: number
-  interview_difficulty: 'Easy' | 'Medium' | 'Hard'
-  interview_score: number
-  offer_rate: number
-}
+type Filter = 'all' | 'interview' | 'salary'
+type Sort = 'recent' | 'helpful' | 'high' | 'low'
 
-interface ReviewCard {
-  id: string
-  role: string
-  relationship_label: string
-  date: string
-  stars: number
-  stage: 'offer' | 'rejected' | 'onsite' | 'applied'
-  stage_label: string
-  salary_badge: string | null
-  headline: string
-  body: string
-  takeaway: string | null
-  helpful_count: number
-}
+const HELPFUL_KEY = 'sa_helpful_reviews'
 
-type TabKey = 'all' | 'interview' | 'salary'
-type SortKey = 'recent' | 'rating_high' | 'rating_low' | 'helpful'
-
-// ─── Demo fallback data (pilot mode) ──────────────────────
-const DEMO_HEADERS: Record<string, CompanyHeader> = {}
-
-const DEMO_REVIEWS: Record<string, ReviewCard[]> = {}
-
-const SORT_OPTIONS: { value: SortKey; label: string }[] = [
-  { value: 'recent', label: 'Sort by: Most Recent' },
-  { value: 'rating_high', label: 'Sort by: Highest Rating' },
-  { value: 'rating_low', label: 'Sort by: Lowest Rating' },
-  { value: 'helpful', label: 'Sort by: Most Helpful' },
-]
-
-// ─── Helpers ──────────────────────────────────────────────
-function toHeader(
-  raw: Awaited<ReturnType<typeof getCompany>>['data']
-): CompanyHeader {
-  const r = Number(raw.avg_overall_rating) || 0
-  const interview = Number(raw.avg_interview_rating) || 0
-  const difficulty: CompanyHeader['interview_difficulty'] =
-    interview >= 4.3 ? 'Hard' : interview >= 3.8 ? 'Medium' : 'Easy'
-
-  return {
-    slug: raw.slug,
-    name: raw.name,
-    industry: raw.industry || 'Technology',
-    location: '—',
-    review_count: raw.total_reviews || 0,
-    overall_rating: r,
-    culture_score: Math.round((Number(raw.avg_culture_rating) || 0) * 20),
-    interview_difficulty: difficulty,
-    interview_score: interview,
-    offer_rate: 0,
+function readHelpful(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(HELPFUL_KEY) || '[]')
+    return Array.isArray(v) ? v : []
+  } catch {
+    return []
   }
 }
 
-function toReviewCard(r: CompanyReview): ReviewCard {
-  const stageMap: Record<
-    string,
-    { stage: ReviewCard['stage']; label: string }
-  > = {
-    current_employee: { stage: 'offer', label: 'Current Employee' },
-    former_employee: { stage: 'onsite', label: 'Former Employee' },
-    applicant: { stage: 'applied', label: 'Applicant' },
-    knows_someone: { stage: 'onsite', label: 'Knows Someone' },
-  }
-  const s = stageMap[r.relationship] || { stage: 'applied', label: 'Anonymous' }
-
-  const salaryBadge =
-    r.salary_min && r.salary_max
-      ? `Salary: $${(r.salary_min / 1000).toFixed(0)}k–$${(r.salary_max / 1000).toFixed(0)}k`
-      : null
-
-  return {
-    id: r.id,
-    role: r.role_type,
-    relationship_label: 'Anonymous Candidate',
-    date: new Date(r.created_at).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    }),
-    stars: Math.round(r.overall_rating),
-    stage: s.stage,
-    stage_label: s.label,
-    salary_badge: salaryBadge,
-    headline: r.review_text.split('\n')[0].slice(0, 160),
-    body: r.review_text,
-    takeaway: null,
-    helpful_count: r.helpful_count,
-  }
+function money(n: number): string {
+  if (n >= 1000) return `${Math.round(n / 1000)}k`
+  return String(n)
 }
 
-function starCount(rating: number): (0 | 0.5 | 1)[] {
-  const result: (0 | 0.5 | 1)[] = []
-  for (let i = 1; i <= 5; i++) {
-    if (rating >= i) result.push(1)
-    else if (rating >= i - 0.5) result.push(0.5)
-    else result.push(0)
-  }
-  return result
-}
-
-function StarDisplay({ rating, size = 16 }: { rating: number; size?: number }) {
-  return (
-    <div className="flex items-center text-[#22c55e]">
-      {starCount(rating).map((v, i) => (
-        <span
-          key={i}
-          className="material-symbols-outlined"
-          style={{
-            fontSize: `${size}px`,
-            fontVariationSettings: v > 0 ? "'FILL' 1" : "'FILL' 0",
-          }}
-        >
-          {v === 1 ? 'star' : v === 0.5 ? 'star_half' : 'star'}
-        </span>
-      ))}
-    </div>
-  )
-}
-
-// ─── Component ────────────────────────────────────────────
 export default function CompanyDetail() {
-  const { slug } = useParams<{ slug: string }>()
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
-  const [header, setHeader] = useState<CompanyHeader | null>(null)
-  const [reviews, setReviews] = useState<ReviewCard[]>([])
-  const [loading, setLoading] = useState(true)
+  const { slug = '' } = useParams<{ slug: string }>()
+  const authed = useIsAuthed()
+  const navigate = useNavigate()
+  const [company, setCompany] = useState<CompanyListItem | null>(null)
   const [notFound, setNotFound] = useState(false)
-  const [tab, setTab] = useState<TabKey>('all')
-  const [sort, setSort] = useState<SortKey>('recent')
-  const [votedIds, setVotedIds] = useState<Set<string>>(new Set())
-  const [reportedIds, setReportedIds] = useState<Set<string>>(new Set())
-  const [allLoaded, setAllLoaded] = useState(false)
+  const [reviews, setReviews] = useState<CompanyReview[]>([])
+  const [page, setPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(1)
+  const [loading, setLoading] = useState(true)
+  const [reviewsLoading, setReviewsLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [filter, setFilter] = useState<Filter>('all')
+  const [sort, setSort] = useState<Sort>('recent')
+  const [helpful, setHelpful] = useState<string[]>(readHelpful)
 
-  // Fetch company + reviews
   useEffect(() => {
-    if (!slug) return
     let cancelled = false
-
-    async function load() {
-      setLoading(true)
-      setNotFound(false)
-      try {
-        const [companyRes, reviewsRes] = await Promise.all([
-          getCompany(slug as string),
-          getCompanyReviews(slug as string, { page: 1 }),
-        ])
-
+    setLoading(true)
+    setNotFound(false)
+    getCompany(slug)
+      .then((res) => {
         if (cancelled) return
-
-        if (companyRes.success && companyRes.data) {
-          setHeader(toHeader(companyRes.data))
-        } else if (DEMO_HEADERS[slug as string]) {
-          setHeader(DEMO_HEADERS[slug as string])
-        } else {
-          setNotFound(true)
-          return
-        }
-
-        if (
-          reviewsRes.success &&
-          reviewsRes.data &&
-          reviewsRes.data.length > 0
-        ) {
-          setReviews(reviewsRes.data.map(toReviewCard))
-        } else if (DEMO_REVIEWS[slug as string]) {
-          setReviews(DEMO_REVIEWS[slug as string])
-        } else {
-          setReviews([])
-        }
-      } catch {
+        if (res.success && res.data) setCompany(res.data)
+        else setNotFound(true)
+      })
+      .catch((err) => {
         if (cancelled) return
-        if (DEMO_HEADERS[slug as string]) {
-          setHeader(DEMO_HEADERS[slug as string])
-          setReviews(DEMO_REVIEWS[slug as string] || [])
-        } else {
-          setNotFound(true)
-        }
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-
-    load()
+        if ((err as { response?: { status?: number } })?.response?.status === 404) setNotFound(true)
+        else setError(apiError(err, 'Couldn’t load this company.'))
+      })
+      .finally(() => !cancelled && setLoading(false))
     return () => {
       cancelled = true
     }
   }, [slug])
 
-  // Filter + sort reviews
-  const visibleReviews = useMemo(() => {
-    let list = [...reviews]
-
-    if (tab === 'interview') {
-      list = list.filter(
-        (r) => r.stage === 'onsite' || r.stage === 'offer' || r.stage === 'rejected'
-      )
-    } else if (tab === 'salary') {
-      list = list.filter((r) => r.salary_badge !== null)
+  useEffect(() => {
+    let cancelled = false
+    setReviewsLoading(true)
+    getCompanyReviews(slug, { page })
+      .then((res) => {
+        if (cancelled) return
+        setReviews(Array.isArray(res.data) ? res.data : [])
+        setTotalPages(res.total_pages || 1)
+      })
+      .catch(() => !cancelled && setReviews([]))
+      .finally(() => !cancelled && setReviewsLoading(false))
+    return () => {
+      cancelled = true
     }
+  }, [slug, page])
 
-    switch (sort) {
-      case 'rating_high':
-        list.sort((a, b) => b.stars - a.stars)
-        break
-      case 'rating_low':
-        list.sort((a, b) => a.stars - b.stars)
-        break
-      case 'helpful':
-        list.sort((a, b) => b.helpful_count - a.helpful_count)
-        break
+  const visible = useMemo(() => {
+    let list = reviews
+    if (filter === 'interview') list = list.filter((r) => r.interview_process?.trim())
+    if (filter === 'salary') list = list.filter((r) => r.salary_min || r.salary_max)
+    const sorted = [...list]
+    if (sort === 'helpful') sorted.sort((a, b) => b.helpful_count - a.helpful_count)
+    if (sort === 'high') sorted.sort((a, b) => b.overall_rating - a.overall_rating)
+    if (sort === 'low') sorted.sort((a, b) => a.overall_rating - b.overall_rating)
+    return sorted
+  }, [reviews, filter, sort])
+
+  const recommend = useMemo(() => {
+    // Only meaningful when every review is loaded on one page.
+    if (totalPages > 1 || reviews.length < 3) return null
+    const yes = reviews.filter((r) => r.would_recommend === 'yes').length
+    return Math.round((yes / reviews.length) * 100)
+  }, [reviews, totalPages])
+
+  async function onHelpful(id: string) {
+    if (helpful.includes(id)) return
+    // Votes need an account (stops scripted vote stuffing).
+    if (!authed) {
+      navigate(`/login?from=${encodeURIComponent(`/companies/${slug}`)}`)
+      return
     }
-    return list
-  }, [reviews, tab, sort])
-
-  async function handleHelpful(id: string) {
-    const isVoted = votedIds.has(id)
-    setVotedIds((prev) => {
-      const next = new Set(prev)
-      if (isVoted) next.delete(id)
-      else next.add(id)
-      return next
-    })
-    setReviews((prev) =>
-      prev.map((r) =>
-        r.id === id
-          ? { ...r, helpful_count: r.helpful_count + (isVoted ? -1 : 1) }
-          : r
-      )
-    )
-    if (!isVoted && !id.startsWith('demo-')) {
-      try {
-        await markReviewHelpful(id)
-      } catch {
-        // silent — count already updated locally
-      }
+    const next = [...helpful, id]
+    setHelpful(next)
+    setReviews((prev) => prev.map((r) => (r.id === id ? { ...r, helpful_count: r.helpful_count + 1 } : r)))
+    try {
+      localStorage.setItem(HELPFUL_KEY, JSON.stringify(next.slice(-500)))
+    } catch {
+      /* ignore */
+    }
+    try {
+      await markReviewHelpful(id)
+    } catch {
+      /* optimistic; ignore */
     }
   }
 
-  function handleReport(id: string) {
-    setReportedIds((prev) => new Set(prev).add(id))
-  }
+  const reviewHref = authed
+    ? `/dashboard/review?company=${encodeURIComponent(company?.name || '')}`
+    : `/signup?redirect=${encodeURIComponent(`/dashboard/review?company=${company?.name || ''}`)}`
 
-  const tabCounts = {
-    all: reviews.length,
-    interview: reviews.filter(
-      (r) => r.stage === 'onsite' || r.stage === 'offer' || r.stage === 'rejected'
-    ).length,
-    salary: reviews.filter((r) => r.salary_badge !== null).length,
-  }
-
-  // ── Not found ─────────────────────────────────────────
-  if (!loading && notFound) {
+  if (notFound) {
     return (
-      <>
-        <SEO
-          title="Company not found | SafeApply.AI"
-          description="The requested company page could not be found."
-          path={`/companies/${slug}`}
-          noindex
-        />
-        <div className="flex flex-col w-full min-h-screen bg-[#0e0e0e] text-[#e5e2e1]">
-          <header className="fixed top-0 left-0 right-0 z-50 bg-[#0e0e0e]/80 backdrop-blur-md border-b border-white/10">
-            <div className="h-16 max-w-[80rem] mx-auto px-4 flex items-center justify-between">
-              <Link to="/" className="flex items-center gap-2">
-                <Logo className="h-8 w-auto" />
-              </Link>
-              <Link to="/companies" className="text-sm text-[#869585] hover:text-white transition-colors">
-                ← Back to Companies
-              </Link>
-            </div>
-          </header>
-          <main className="pt-16 flex-1 flex items-center justify-center px-4">
-            <div className="text-center max-w-md">
-              <span className="material-symbols-outlined text-[#869585] text-5xl mb-4 block">
-                domain_disabled
-              </span>
-              <h1 className="text-3xl font-bold text-white mb-3">Company not found</h1>
-              <p className="text-sm text-[#869585] mb-6">
-                We don't have a record for this company yet. Search for another one or come back later.
-              </p>
-              <Link
-                to="/companies"
-                className="inline-block bg-[#22c55e] hover:bg-[#16A34A] text-black text-sm font-semibold px-6 py-3 rounded-lg transition-colors"
-              >
-                Browse all companies
-              </Link>
-            </div>
-          </main>
+      <AdaptiveLayout>
+        <SEO title="Company not found | SafeApply.AI" description="This company has no reviews yet." path={`/companies/${slug}`} noindex />
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-24">
+          <EmptyState
+            icon="domain_disabled"
+            title="No page for this company yet"
+            body="It might be listed under a different name, or nobody has reviewed it so far."
+            action={
+              <div className="flex flex-wrap justify-center gap-2">
+                <ButtonLink to="/companies" variant="secondary">
+                  Search companies
+                </ButtonLink>
+                <ButtonLink to={authed ? '/dashboard/review' : '/signup'}>Write the first review</ButtonLink>
+              </div>
+            }
+          />
         </div>
-      </>
+      </AdaptiveLayout>
     )
   }
 
-  // ── Loading ───────────────────────────────────────────
-  if (loading || !header) {
-    return (
-      <>
-        <SEO
-          title="Loading… | SafeApply.AI"
-          description="Loading company reviews."
-          path={`/companies/${slug}`}
-          noindex
-        />
-        <div className="flex flex-col w-full min-h-screen bg-[#0e0e0e] text-[#e5e2e1] items-center justify-center">
-          <span className="material-symbols-outlined text-[#22c55e] text-4xl animate-spin">
-            sync
-          </span>
-          <p className="text-[#869585] text-sm mt-3">Loading company…</p>
-        </div>
-      </>
-    )
-  }
-
-  // ── Loaded ────────────────────────────────────────────
-  const orgJsonLd = {
-    '@context': 'https://schema.org',
-    '@type': 'Organization',
-    name: header.name,
-    url: `https://safeapply.ai/companies/${header.slug}`,
-    aggregateRating: {
-      '@type': 'AggregateRating',
-      ratingValue: header.overall_rating,
-      reviewCount: header.review_count,
-      bestRating: 5,
-      worstRating: 1,
-    },
-  }
-
-  // Review CTA — send logged-out visitors through signup first, then
-  // return them straight to the review form with this company pre-filled.
-  const reviewTargetPath = `/dashboard/review?company=${encodeURIComponent(
-    header.slug,
-  )}`
-  const reviewHref = isAuthenticated
-    ? reviewTargetPath
-    : `/signup?redirect=${encodeURIComponent(reviewTargetPath)}`
-  const reviewLabel = isAuthenticated ? 'Submit a Review' : 'Sign up to Review'
-  const reviewIcon = isAuthenticated ? 'rate_review' : 'person_add'
+  const overall = Number(company?.avg_overall_rating) || 0
 
   return (
-    <>
+    <AdaptiveLayout>
       <SEO
-        title={`${header.name} Reviews — Culture, Interviews, Salary | SafeApply.AI`}
-        description={`Read ${header.review_count} anonymous reviews of ${header.name}. Overall rating ${header.overall_rating}/5, culture score ${header.culture_score}%, interview difficulty ${header.interview_difficulty}.`}
-        path={`/companies/${header.slug}`}
-        jsonLd={orgJsonLd}
+        title={company ? `${company.name} reviews | SafeApply.AI` : 'Company reviews | SafeApply.AI'}
+        description={
+          company
+            ? `${company.total_reviews} anonymous review${company.total_reviews === 1 ? '' : 's'} of ${company.name}: culture, interviews and pay.`
+            : 'Anonymous company reviews.'
+        }
+        path={`/companies/${slug}`}
+        jsonLd={
+          company && company.total_reviews > 0
+            ? {
+                '@context': 'https://schema.org',
+                '@type': 'Organization',
+                name: company.name,
+                url: `${SITE_URL}/companies/${slug}`,
+                aggregateRating: {
+                  '@type': 'AggregateRating',
+                  ratingValue: overall.toFixed(1),
+                  reviewCount: company.total_reviews,
+                  bestRating: 5,
+                  worstRating: 1,
+                },
+              }
+            : undefined
+        }
       />
 
-      <div className="flex flex-col w-full min-h-screen bg-[#0e0e0e] text-[#e5e2e1]">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-10 sm:pt-14 pb-20">
+        <nav aria-label="Breadcrumb" className="text-sm text-muted">
+          <Link to="/companies" className="inline-flex items-center gap-1 hover:text-fg transition-colors">
+            <Icon name="arrow_back" className="text-[16px]" />
+            All companies
+          </Link>
+        </nav>
 
-        {/* NAVBAR */}
-        <header className="fixed top-0 left-0 right-0 z-50 bg-[#0e0e0e]/80 backdrop-blur-md border-b border-white/10">
-          <div className="h-16 max-w-[80rem] mx-auto px-4 flex items-center justify-between">
-            <Link to="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
-              <Logo className="h-8 w-auto" />
-            </Link>
-            <nav className="hidden md:flex items-center gap-6">
-              <Link to="/#features" className="text-sm text-[#869585] hover:text-[#e5e2e1] transition-colors">Features</Link>
-              <Link to="/#pricing" className="text-sm text-[#869585] hover:text-[#e5e2e1] transition-colors">Pricing</Link>
-              <Link to="/companies" className="text-sm font-medium text-[#e5e2e1] hover:text-[#22c55e] transition-colors">Companies</Link>
-              <Link to="/blog" className="text-sm text-[#869585] hover:text-[#e5e2e1] transition-colors">Blog</Link>
-              <Link to="/about" className="text-sm text-[#869585] hover:text-[#e5e2e1] transition-colors">About</Link>
-            </nav>
-            <div className="flex items-center gap-3">
-              <Link to="/login" className="px-4 py-1.5 text-sm font-medium text-[#e5e2e1] bg-[#1c1b1b] border border-white/10 rounded-lg hover:border-white/20 transition-colors">
-                Login
-              </Link>
-              <Link to="/signup" className="px-4 py-1.5 text-sm font-semibold bg-[#22c55e] text-[#003915] rounded-lg hover:bg-[#4be277] transition-colors">
-                Sign Up
-              </Link>
+        {error && <Alert className="mt-6">{error}</Alert>}
+
+        {/* Header */}
+        <header className="mt-8 grid lg:grid-cols-[1fr_auto] gap-8 items-end">
+          {loading || !company ? (
+            <div className="flex items-center gap-4">
+              <Skeleton className="w-16 h-16 rounded-[14px]" />
+              <div className="flex flex-col gap-3">
+                <Skeleton className="h-8 w-56" />
+                <Skeleton className="h-4 w-32" />
+              </div>
             </div>
-          </div>
+          ) : (
+            <Reveal className="flex items-center gap-4 min-w-0">
+              <span className="w-16 h-16 rounded-[14px] bg-surface border border-line flex items-center justify-center text-2xl font-semibold shrink-0" aria-hidden>
+                {company.name.trim().charAt(0).toUpperCase()}
+              </span>
+              <div className="min-w-0">
+                <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight break-words flex flex-wrap items-center gap-2">
+                  {company.name}
+                  {company.verified && (
+                    <span title="Verified company" className="inline-flex">
+                      <Icon name="verified" fill className="text-[24px] text-accent" />
+                      <span className="sr-only">Verified company</span>
+                    </span>
+                  )}
+                </h1>
+                <p className="text-muted mt-1">
+                  {company.industry ? `${company.industry} · ` : ''}
+                  {company.total_reviews} review{company.total_reviews === 1 ? '' : 's'}
+                </p>
+                {company.verified && (
+                  <p className="mt-1.5">
+                    <ResponseRate rate={company.response_rate ?? null} sample={company.response_sample ?? 0} />
+                  </p>
+                )}
+              </div>
+            </Reveal>
+          )}
+          <ButtonLink to={reviewHref} icon="rate_review" className="justify-self-start lg:justify-self-end">
+            Write a review
+          </ButtonLink>
         </header>
 
-        <main className="w-full pt-16 min-h-screen">
+        {company && (
+          <div className="mt-8">
+            <CompanyTabs slug={company.slug} verified={!!company.verified} />
+          </div>
+        )}
 
-          {/* ── HEADER ────────────────────────────────── */}
-          <section className="w-full border-b border-white/10 py-12 px-4">
-            <div className="max-w-[80rem] mx-auto flex flex-col gap-6">
+        {company?.verified && (
+          <Reveal delay={0.04} className="mt-8">
+            <div className="flex items-baseline justify-between gap-3 mb-3">
+              <h2 className="text-lg font-semibold">Hiring record</h2>
+              <Link to={`/companies/${company.slug}/hiring-record`} className="text-sm text-muted hover:text-fg underline-offset-4 hover:underline">
+                Every job
+              </Link>
+            </div>
+            {company.ghost_warning && <Alert tone="warn" className="mb-3">This company has a hiring warning for repeatedly not opening applications.</Alert>}
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <LevelChip level={company.trust_level ?? 0} />
+              <BadgeList badges={company.badges ?? []} />
+            </div>
+            <RecordGrid score={company.record ?? null} />
+          </Reveal>
+        )}
 
-              {/* Breadcrumb */}
-              <div className="flex items-center gap-2">
-                <Link
-                  to="/companies"
-                  className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-[#869585] hover:text-white transition-colors group"
-                >
-                  <span className="material-symbols-outlined text-[14px] transition-transform group-hover:-translate-x-0.5">
-                    arrow_back
-                  </span>
-                  Back to Company Reviews
-                </Link>
-                <span className="text-[#353534]">•</span>
-                <span className="text-xs text-[#869585]">Entities</span>
-                <span className="text-[#353534]">•</span>
-                <span className="font-mono text-xs text-[#22c55e] tracking-tight">
-                  ORG_{header.slug.toUpperCase()}_CORP
-                </span>
+        {/* Scores */}
+        {company && (
+          <Reveal delay={0.05}>
+            <dl className="mt-10 grid grid-cols-2 lg:grid-cols-4 gap-px bg-line border border-line rounded-[var(--radius-card)] overflow-hidden">
+              <Score label="Overall" value={overall} big />
+              <Score label="Culture" value={Number(company.avg_culture_rating) || 0} />
+              <Score label="Interview experience" value={Number(company.avg_interview_rating) || 0} />
+              <div className="bg-ink p-5 sm:p-6">
+                <dt className="text-sm text-muted">Would recommend</dt>
+                <dd className="mt-2 text-[28px] font-semibold tabular leading-none">{recommend === null ? '-' : `${recommend}%`}</dd>
+                <dd className="mt-2 text-xs text-muted">{recommend === null ? 'Shown once there are 3+ reviews' : `of ${reviews.length} reviewers`}</dd>
               </div>
+            </dl>
+          </Reveal>
+        )}
 
-              {/* Company identity + CTA */}
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-                <div className="flex items-start gap-4">
-                  <div className="w-16 h-16 rounded-lg bg-[#1c1b1b] border border-white/10 flex items-center justify-center shrink-0">
-                    <span className="text-[#22c55e] text-2xl font-extrabold">
-                      {header.name.charAt(0)}
-                    </span>
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <div className="flex flex-wrap items-center gap-3">
-                      <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-white">
-                        {header.name}
-                      </h1>
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-mono text-[11px] bg-[#22c55e]/10 text-[#22c55e] border border-[#22c55e]/20">
-                        <span className="w-1.5 h-1.5 rounded-full bg-[#22c55e] animate-pulse" />
-                        LIVE PIPELINE TELEMETRY
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-3 mt-1">
-                      <span className="text-xs px-3 py-1 rounded bg-[#1c1b1b] border border-white/10 text-[#869585] font-medium">
-                        {header.industry} • {header.location}
-                      </span>
-                      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#22c55e]">
-                        <span className="material-symbols-outlined text-[16px]" style={{ fontVariationSettings: "'FILL' 1" }}>
-                          verified
+        {company?.verified && (company.about || company.open_jobs?.length) ? (
+          <Reveal delay={0.08} className="mt-8 grid lg:grid-cols-2 gap-6">
+            {company.about && (
+              <div className="bg-surface border border-line rounded-[var(--radius-card)] p-5">
+                <h2 className="text-[15px] font-semibold">About</h2>
+                <p className="mt-2 text-sm text-muted leading-relaxed whitespace-pre-line break-words">{company.about}</p>
+              </div>
+            )}
+            {!!company.open_jobs?.length && (
+              <div className="bg-surface border border-line rounded-[var(--radius-card)] p-5">
+                <h2 className="text-[15px] font-semibold">Open jobs</h2>
+                <ul className="mt-2 divide-y divide-line">
+                  {company.open_jobs.map((j) => (
+                    <li key={j.id}>
+                      <Link to={`/jobs/${j.id}`} className="flex items-center justify-between gap-3 py-2.5 group">
+                        <span className="min-w-0">
+                          <span className="block text-sm font-medium truncate group-hover:text-accent transition-colors">{j.title}</span>
+                          <span className="block text-xs text-muted">{[WORK_MODE_LABEL[j.work_mode as keyof typeof WORK_MODE_LABEL], j.location].filter(Boolean).join(' · ')}</span>
                         </span>
-                        {header.review_count} Verified Candidate Reviews
-                      </span>
-                    </div>
+                        <Icon name="chevron_right" className="text-[18px] text-muted" />
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </Reveal>
+        ) : null}
+
+        {/* Reviews */}
+        <section className="mt-14" aria-labelledby="reviews-h">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <h2 id="reviews-h" className="text-xl font-semibold tracking-tight">
+              Reviews
+            </h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <Tabs<Filter>
+                label="Filter reviews"
+                value={filter}
+                onChange={setFilter}
+                items={[
+                  { value: 'all', label: 'All' },
+                  { value: 'interview', label: 'Interview notes' },
+                  { value: 'salary', label: 'Pay' },
+                ]}
+              />
+              <Select
+                aria-label="Sort reviews"
+                value={sort}
+                onChange={(e) => setSort(e.target.value as Sort)}
+                options={[
+                  { value: 'recent', label: 'Newest' },
+                  { value: 'helpful', label: 'Most helpful' },
+                  { value: 'high', label: 'Highest rated' },
+                  { value: 'low', label: 'Lowest rated' },
+                ]}
+                wrapClassName="w-40"
+                className="h-10"
+              />
+            </div>
+          </div>
+
+          <div className="mt-6">
+            {reviewsLoading ? (
+              <div className="flex flex-col gap-4">
+                {Array.from({ length: 3 }, (_, i) => (
+                  <div key={i} className="rounded-[var(--radius-card)] border border-line bg-surface p-6 flex flex-col gap-3">
+                    <Skeleton className="h-4 w-1/3" />
+                    <Skeleton className="h-3 w-1/4" />
+                    <Skeleton className="h-16 w-full" />
                   </div>
-                </div>
-
-                <Link
-                  to={reviewHref}
-                  className="inline-flex items-center justify-center gap-2 text-sm bg-[#22c55e] hover:bg-[#16A34A] text-black font-bold px-6 py-3 rounded-xl transition-all active:scale-[0.99] whitespace-nowrap"
-                >
-                  <span className="material-symbols-outlined text-[18px]">{reviewIcon}</span>
-                  {reviewLabel}
-                </Link>
+                ))}
               </div>
-
-              {/* Metric tiles */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-2">
-
-                {/* Overall rating */}
-                <div className="bg-[#0D0D0D] border border-white/10 rounded-xl p-4 md:p-6 text-center flex flex-col items-center hover:border-white/20 transition-colors">
-                  <span className="text-2xl md:text-3xl font-extrabold text-white leading-tight">
-                    {header.overall_rating.toFixed(1)}{' '}
-                    <span className="text-[#869585] font-normal text-base">/ 5.0</span>
-                  </span>
-                  <span className="text-[11px] uppercase tracking-wider text-[#869585] mt-1 mb-2">
-                    Overall Rating
-                  </span>
-                  <StarDisplay rating={header.overall_rating} />
-                </div>
-
-                {/* Culture score */}
-                <div className="bg-[#0D0D0D] border border-white/10 rounded-xl p-4 md:p-6 text-center flex flex-col items-center hover:border-white/20 transition-colors">
-                  <span className="text-2xl md:text-3xl font-extrabold text-white leading-tight">
-                    {header.culture_score}%
-                  </span>
-                  <span className="text-[11px] uppercase tracking-wider text-[#869585] mt-1 mb-2">
-                    Culture Score
-                  </span>
-                  <div className="w-24 h-1.5 bg-[#1c1b1b] rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-[#22c55e] rounded-full"
-                      style={{ width: `${header.culture_score}%` }}
-                    />
-                  </div>
-                </div>
-
-                {/* Interview difficulty */}
-                <div className="bg-[#0D0D0D] border border-white/10 rounded-xl p-4 md:p-6 text-center flex flex-col items-center hover:border-white/20 transition-colors">
-                  <span className="text-xl md:text-2xl font-extrabold text-[#EAB308] leading-tight">
-                    {header.interview_difficulty} ({header.interview_score.toFixed(1)})
-                  </span>
-                  <span className="text-[11px] uppercase tracking-wider text-[#869585] mt-1 mb-2">
-                    Interview Difficulty
-                  </span>
-                  <span className="font-mono text-[10px] text-[#869585] uppercase">
-                    Top 5% Depth Index
-                  </span>
-                </div>
-
-                {/* Offer rate */}
-                <div className="bg-[#0D0D0D] border border-white/10 rounded-xl p-4 md:p-6 text-center flex flex-col items-center hover:border-white/20 transition-colors">
-                  <span className="text-2xl md:text-3xl font-extrabold text-white leading-tight">
-                    {header.offer_rate}%
-                  </span>
-                  <span className="text-[11px] uppercase tracking-wider text-[#869585] mt-1 mb-2">
-                    Offer Rate
-                  </span>
-                  <span className="font-mono text-[10px] text-[#22c55e]/80 uppercase">
-                    Post-Onsite Ratio
-                  </span>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* ── REVIEWS ───────────────────────────────── */}
-          <section className="w-full max-w-[80rem] mx-auto py-8 px-4">
-
-            {/* Tabs + sort */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-white/10 gap-4">
-              <div className="flex items-center gap-6" role="tablist">
-                <button
-                  role="tab"
-                  aria-selected={tab === 'all'}
-                  onClick={() => setTab('all')}
-                  className={`text-sm font-semibold pb-3 transition-colors border-b-2 ${
-                    tab === 'all'
-                      ? 'text-white border-[#22c55e]'
-                      : 'text-[#869585] hover:text-white border-transparent'
-                  }`}
-                >
-                  All Reviews{' '}
-                  <span className="font-mono text-[#869585] font-normal ml-1">
-                    ({tabCounts.all})
-                  </span>
-                </button>
-                <button
-                  role="tab"
-                  aria-selected={tab === 'interview'}
-                  onClick={() => setTab('interview')}
-                  className={`text-sm font-semibold pb-3 transition-colors border-b-2 ${
-                    tab === 'interview'
-                      ? 'text-white border-[#22c55e]'
-                      : 'text-[#869585] hover:text-white border-transparent'
-                  }`}
-                >
-                  Interview Experiences{' '}
-                  <span className="font-mono text-[#869585] font-normal ml-1">
-                    ({tabCounts.interview})
-                  </span>
-                </button>
-                <button
-                  role="tab"
-                  aria-selected={tab === 'salary'}
-                  onClick={() => setTab('salary')}
-                  className={`text-sm font-semibold pb-3 transition-colors border-b-2 ${
-                    tab === 'salary'
-                      ? 'text-white border-[#22c55e]'
-                      : 'text-[#869585] hover:text-white border-transparent'
-                  }`}
-                >
-                  Salary Mentions{' '}
-                  <span className="font-mono text-[#869585] font-normal ml-1">
-                    ({tabCounts.salary})
-                  </span>
-                </button>
-              </div>
-
-              <div className="pb-2 sm:pb-0">
-                <div className="relative">
-                  <select
-                    value={sort}
-                    onChange={(e) => setSort(e.target.value as SortKey)}
-                    className="appearance-none bg-[#1c1b1b] border border-white/10 rounded text-sm text-[#869585] hover:text-white pl-3 pr-8 py-1.5 focus:border-[#22c55e] focus:outline-none cursor-pointer transition-colors"
-                  >
-                    {SORT_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value} className="bg-[#0e0e0e] text-white">
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="material-symbols-outlined absolute right-2 top-1.5 text-[16px] text-[#869585] pointer-events-none">
-                    expand_more
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Diagnostic bar */}
-            <div className="my-4 p-3 bg-[#1c1b1b] border border-white/10 rounded flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-[#22c55e] text-[18px]">security</span>
-                <span className="text-xs text-[#869585]">
-                  All accounts cryptographically linked to verified GitHub or work-email hashes to maintain zero bot noise.
-                </span>
-              </div>
-              <div className="flex items-center gap-2 font-mono text-[11px] text-[#22c55e]">
-                <span>ENCRYPTION: AES-256</span>
-                <span className="text-[#353534]">|</span>
-                <span>VERIFICATION: ATS_PASS</span>
-              </div>
-            </div>
-
-            {/* Reviews list */}
-            {visibleReviews.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 text-center bg-[#0D0D0D] border border-white/10 rounded-xl">
-                <span className="material-symbols-outlined text-[#869585] text-4xl mb-3">
-                  rate_review
-                </span>
-                <h4 className="text-base font-semibold text-white mb-1">No reviews in this view</h4>
-                <p className="text-sm text-[#869585] max-w-sm">
-                  Try a different tab, or be the first to submit a review.
-                </p>
+            ) : visible.length === 0 ? (
+              <div className="rounded-[var(--radius-card)] border border-line bg-surface">
+                <EmptyState
+                  icon="forum"
+                  title={filter === 'all' ? 'No approved reviews yet' : 'Nothing matches this filter'}
+                  body={filter === 'all' ? 'New reviews appear after moderation.' : 'Switch back to All to see every review.'}
+                  action={
+                    filter === 'all' ? (
+                      <ButtonLink to={reviewHref} variant="secondary">
+                        Write a review
+                      </ButtonLink>
+                    ) : (
+                      <Button variant="secondary" onClick={() => setFilter('all')}>
+                        Show all
+                      </Button>
+                    )
+                  }
+                />
               </div>
             ) : (
-              <div className="flex flex-col gap-4">
-                {visibleReviews.map((r) => {
-                  const voted = votedIds.has(r.id)
-                  const reported = reportedIds.has(r.id)
-                  const stageClass =
-                    r.stage === 'offer'
-                      ? 'bg-[#22c55e]/15 text-[#22c55e] border-[#22c55e]/30'
-                      : r.stage === 'rejected'
-                      ? 'bg-[#EF4444]/15 text-[#EF4444] border-[#EF4444]/30'
-                      : 'bg-[#EAB308]/15 text-[#EAB308] border-[#EAB308]/30'
-
-                  return (
-                    <article
-                      key={r.id}
-                      className="bg-[#0D0D0D] border border-white/10 rounded-xl p-6 transition-colors hover:border-white/20 flex flex-col gap-4"
-                    >
-                      {/* Top row */}
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 text-xs">
-                          <span className="text-white font-semibold">{r.relationship_label}</span>
-                          <span className="text-[#353534]">•</span>
-                          <span className="text-[#869585]">{r.role}</span>
-                        </div>
-                        <div className="flex items-center gap-1.5 text-[#869585] font-mono text-xs">
-                          <span className="material-symbols-outlined text-[14px]">schedule</span>
-                          <span>{r.date}</span>
-                        </div>
-                      </div>
-
-                      {/* Rating + badges */}
-                      <div className="flex flex-wrap items-center gap-3">
-                        <div className="flex items-center gap-1">
-                          <StarDisplay rating={r.stars} />
-                          <span className="font-mono text-sm font-bold text-white ml-1">
-                            {r.stars.toFixed(1)}
-                          </span>
-                        </div>
-                        <span
-                          className={`px-2.5 py-0.5 rounded-full font-mono text-[11px] border font-medium ${stageClass}`}
-                        >
-                          {r.stage_label}
-                        </span>
-                        {r.salary_badge && (
-                          <span className="px-2 py-0.5 rounded font-mono text-[11px] bg-[#1c1b1b] border border-white/10 text-[#869585]">
-                            {r.salary_badge}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Body */}
-                      <div className="text-sm text-[#869585] leading-relaxed flex flex-col gap-2">
-                        <p className="text-white font-medium">{r.headline}</p>
-                        <p>{r.body}</p>
-                        {r.takeaway && (
-                          <p className="text-[#869585]/80 text-xs font-mono bg-[#1c1b1b]/60 p-3 rounded border border-white/5">
-                            Key takeaway: {r.takeaway}
-                          </p>
-                        )}
-                      </div>
-
-                      {/* Actions */}
-                      <div className="flex items-center justify-between pt-2 border-t border-white/5">
-                        <button
-                          type="button"
-                          onClick={() => handleHelpful(r.id)}
-                          className={`flex items-center gap-1.5 text-xs transition-colors ${
-                            voted ? 'text-[#22c55e]' : 'text-[#869585] hover:text-[#22c55e]'
-                          }`}
-                        >
-                          <span
-                            className="material-symbols-outlined text-[16px]"
-                            style={{ fontVariationSettings: voted ? "'FILL' 1" : "'FILL' 0" }}
-                          >
-                            thumb_up
-                          </span>
-                          <span>Helpful ({r.helpful_count})</span>
-                        </button>
-
-                        {reported ? (
-                          <span className="text-xs text-[#EF4444] opacity-60">
-                            Reported to Moderator
-                          </span>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => handleReport(r.id)}
-                            className="text-xs text-[#869585]/60 hover:text-[#EF4444] transition-colors"
-                          >
-                            Report
-                          </button>
-                        )}
-                      </div>
-                    </article>
-                  )
-                })}
-              </div>
+              <ul className="flex flex-col gap-4">
+                {visible.map((r, i) => (
+                  <Reveal as="li" key={r.id} delay={Math.min(i, 6) * 0.03}>
+                    <ReviewCard r={r} helpful={helpful.includes(r.id)} onHelpful={() => onHelpful(r.id)} />
+                  </Reveal>
+                ))}
+              </ul>
             )}
-
-            {/* Load More */}
-            {visibleReviews.length > 0 && (
-              <div className="mt-12 flex flex-col items-center justify-center gap-2">
-                <button
-                  type="button"
-                  disabled={allLoaded}
-                  onClick={() => setAllLoaded(true)}
-                  className={`inline-flex items-center gap-2 text-sm bg-[#1c1b1b] border border-white/10 hover:border-[#22c55e]/40 text-white font-semibold px-8 py-3 rounded-lg transition-all ${
-                    allLoaded ? 'opacity-50 pointer-events-none' : ''
-                  }`}
-                >
-                  <span className={`material-symbols-outlined text-[18px] ${allLoaded ? '' : ''}`}>
-                    {allLoaded ? 'check_circle' : 'cached'}
-                  </span>
-                  {allLoaded ? 'All Telemetry Loaded' : 'Load More Reviews'}
-                </button>
-                <span className="font-mono text-[11px] text-[#869585]/70">
-                  Showing {visibleReviews.length} of {header.review_count} total telemetry records
-                </span>
-              </div>
-            )}
-          </section>
-        </main>
-
-        {/* FOOTER */}
-        <footer className="w-full bg-[#0e0e0e] border-t border-white/10 py-12">
-          <div className="max-w-[80rem] mx-auto px-4 grid grid-cols-1 md:grid-cols-4 gap-8">
-            <div className="flex flex-col gap-3">
-              <Logo className="h-7 w-auto" />
-              <p className="text-xs text-[#869585]">
-                Job intelligence platform aggregating public data to help you apply smarter.
-              </p>
-            </div>
-            <div className="flex flex-col gap-2">
-              <span className="text-xs font-semibold text-[#869585] uppercase tracking-wider mb-1">Product</span>
-              <Link to="/#features" className="text-sm text-[#bccbb9] hover:text-[#e5e2e1] transition-colors">CV Intelligence</Link>
-              <Link to="/companies" className="text-sm text-[#bccbb9] hover:text-[#e5e2e1] transition-colors">Company Reports</Link>
-              <Link to="/#pricing" className="text-sm text-[#bccbb9] hover:text-[#e5e2e1] transition-colors">Pricing</Link>
-            </div>
-            <div className="flex flex-col gap-2">
-              <span className="text-xs font-semibold text-[#869585] uppercase tracking-wider mb-1">Company</span>
-              <Link to="/blog" className="text-sm text-[#bccbb9] hover:text-[#e5e2e1] transition-colors">Blog</Link>
-              <Link to="/about" className="text-sm text-[#bccbb9] hover:text-[#e5e2e1] transition-colors">About</Link>
-              <Link to="/privacy" className="text-sm text-[#bccbb9] hover:text-[#e5e2e1] transition-colors">Privacy Policy</Link>
-              <Link to="/terms" className="text-sm text-[#bccbb9] hover:text-[#e5e2e1] transition-colors">Terms of Service</Link>
-            </div>
-            <div className="flex flex-col gap-3">
-              <span className="text-xs font-semibold text-[#869585] uppercase tracking-wider">Stay Updated</span>
-              <p className="text-xs text-[#869585]">Get bi-weekly job market intelligence drops.</p>
-              <div className="flex items-center gap-2">
-                <input
-                  type="email"
-                  placeholder="your@email.com"
-                  className="bg-[#1c1b1b] border border-white/10 rounded-lg px-3 py-1.5 text-sm text-[#e5e2e1] placeholder:text-[#869585] focus:outline-none focus:border-[#22c55e] flex-1"
-                />
-                <button className="bg-[#22c55e] text-[#003915] px-3 py-1.5 text-xs font-semibold rounded-lg hover:bg-[#4be277] transition-colors">
-                  Subscribe
-                </button>
-              </div>
+            <div className="mt-8">
+              <Pagination page={page} totalPages={totalPages} onChange={setPage} />
             </div>
           </div>
-          <div className="max-w-[80rem] mx-auto px-4 mt-8 pt-4 border-t border-white/10 flex flex-col md:flex-row items-center justify-between gap-3">
-            <span className="text-xs text-[#869585]">© {new Date().getFullYear()} SafeApply.AI. All rights reserved.</span>
-            <div className="flex gap-6">
-              <Link to="/terms" className="text-xs text-[#869585] hover:text-[#e5e2e1]">Terms</Link>
-              <Link to="/privacy" className="text-xs text-[#869585] hover:text-[#e5e2e1]">Privacy</Link>
-            </div>
-          </div>
-        </footer>
+        </section>
+
+        <p className="mt-12 text-xs text-muted leading-relaxed max-w-[70ch]">
+          Reviews are the opinions of individual members. SafeApply moderates for abuse and personal information but doesn’t verify every claim.
+        </p>
       </div>
-    </>
+    </AdaptiveLayout>
+  )
+}
+
+function Score({ label, value, big }: { label: string; value: number; big?: boolean }) {
+  return (
+    <div className="bg-ink p-5 sm:p-6">
+      <dt className="text-sm text-muted">{label}</dt>
+      <dd className={cn('mt-2 font-semibold tabular leading-none', big ? 'text-[34px]' : 'text-[28px]')}>{value ? value.toFixed(1) : '-'}</dd>
+      <dd className="mt-2">
+        <Stars rating={value} size={14} />
+      </dd>
+    </div>
+  )
+}
+
+function ReviewCard({ r, helpful, onHelpful }: { r: CompanyReview; helpful: boolean; onHelpful: () => void }) {
+  const [open, setOpen] = useState(false)
+  const long = r.review_text.length > 420
+  const text = open || !long ? r.review_text : `${r.review_text.slice(0, 400).trimEnd()}…`
+  const rec = r.would_recommend === 'yes' ? { tone: 'accent' as const, label: 'Recommends' } : r.would_recommend === 'no' ? { tone: 'danger' as const, label: 'Doesn’t recommend' } : { tone: 'neutral' as const, label: 'Unsure' }
+
+  return (
+    <article className="rounded-[var(--radius-card)] border border-line bg-surface p-5 sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <Stars rating={r.overall_rating} />
+            <span className="text-sm font-semibold tabular">{Number(r.overall_rating).toFixed(1)}</span>
+          </div>
+          <p className="mt-2 font-semibold break-words">{r.role_type}</p>
+          <p className="text-sm text-muted mt-0.5">
+            {RELATIONSHIP_LABEL[r.relationship] || 'Member'} · <time dateTime={r.created_at}>{formatDate(r.created_at)}</time>
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          <Badge tone={rec.tone}>{rec.label}</Badge>
+          {(r.salary_min || r.salary_max) && (
+            <Badge>
+              Pay {r.salary_min ? money(r.salary_min) : '?'}
+              {r.salary_max ? ` to ${money(r.salary_max)}` : '+'}
+            </Badge>
+          )}
+        </div>
+      </div>
+
+      <p className="mt-4 text-[15px] leading-relaxed text-fg/85 whitespace-pre-line break-words">{text}</p>
+      {long && (
+        <button type="button" onClick={() => setOpen((v) => !v)} className="mt-2 text-sm text-accent hover:underline">
+          {open ? 'Show less' : 'Read the full review'}
+        </button>
+      )}
+
+      {r.interview_process?.trim() && (
+        <div className="mt-5 rounded-[10px] bg-ink/60 border border-line p-4">
+          <p className="text-xs text-muted mb-1.5">Interview process</p>
+          <p className="text-sm leading-relaxed text-fg/85 whitespace-pre-line break-words">{r.interview_process}</p>
+        </div>
+      )}
+
+      {r.reply && (
+        <div className="mt-5 border-l-2 border-accent/50 pl-4">
+          <p className="text-xs text-accent font-medium">Response from the company</p>
+          <p className="mt-1 text-sm leading-relaxed text-fg/85 whitespace-pre-line break-words">{r.reply.body}</p>
+        </div>
+      )}
+
+      <div className="mt-5 pt-4 border-t border-line flex flex-wrap items-center justify-between gap-3 text-sm">
+        <div className="flex gap-4 text-muted tabular">
+          <span>Culture {r.culture_rating}/5</span>
+          <span>Interview {r.interview_rating}/5</span>
+        </div>
+        <button
+          type="button"
+          onClick={onHelpful}
+          disabled={helpful}
+          aria-pressed={helpful}
+          className={cn(
+            'inline-flex items-center gap-1.5 h-8 px-3 rounded-full border transition-colors',
+            helpful ? 'border-accent/40 text-accent' : 'border-line text-muted hover:text-fg hover:border-muted/60',
+          )}
+        >
+          <Icon name="thumb_up" fill={helpful} className="text-[16px]" />
+          Helpful <span className="tabular">{r.helpful_count}</span>
+        </button>
+      </div>
+    </article>
   )
 }

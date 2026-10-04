@@ -1,6 +1,6 @@
 import './config/env'
 
-import express from 'express'
+import express, { type Express } from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
 import morgan from 'morgan'
@@ -17,32 +17,98 @@ import reviewRoutes from './routes/reviews'
 import analyticsRoutes from './routes/analytics'
 import adminRoutes from './routes/admin'
 import paymentRoutes from './routes/payments'
+import recruiterRoutes from './routes/recruiter'
+import jobRoutes from './routes/jobs'
+import messageRoutes from './routes/messages'
+import notificationRoutes from './routes/notifications'
+import freelanceRoutes from './routes/freelance'
+import billingRoutes from './routes/billing'
+import recordRoutes from './routes/records'
+import interviewRoutes from './routes/interviews'
+import progressRoutes from './routes/progress'
+import { badgeRoutes, talentRoutes, teamJoinRoutes } from './routes/teams'
+import { disputeRoutes, publicRoutes, shareRoutes } from './routes/growth'
+import { sitemap } from './controllers/growth.controller'
+import { startScheduler } from './jobs/scheduler'
 
 initSentry()
 
-const app = express()
+const app: Express = express()
 
-app.use(helmet())
+// Real client IP behind a proxy/CDN (see TRUST_PROXY in env.ts). Without
+// this every visitor shares the proxy's IP (rate limits break); with `true`
+// anyone could spoof X-Forwarded-For. A hop count is the safe middle.
+app.set('trust proxy', env.trustProxy)
+app.disable('x-powered-by')
+app.set('etag', false)
+
+// ── Security headers. This server only returns JSON, so the CSP denies everything.
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: { defaultSrc: ["'none'"], frameAncestors: ["'none'"], baseUri: ["'none'"], formAction: ["'none'"] },
+    },
+    crossOriginResourcePolicy: { policy: 'same-site' },
+    referrerPolicy: { policy: 'no-referrer' },
+    strictTransportSecurity: env.isProd ? { maxAge: 63072000, includeSubDomains: true, preload: true } : false,
+  }),
+)
+app.use((_req, res, next) => {
+  // API responses carry personal data: never cache them anywhere.
+  res.setHeader('Cache-Control', 'no-store')
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()')
+  next()
+})
+
+// ── CORS: only our own frontend(s), with cookies.
+const allowedOrigins = new Set(env.frontendOrigins)
 app.use(
   cors({
-    origin: env.frontendUrl,
+    origin(origin, cb) {
+      // No Origin = same-origin request or a server-to-server call (health checks).
+      if (!origin || allowedOrigins.has(origin)) return cb(null, true)
+      return cb(null, false)
+    },
     credentials: true,
-    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
-  })
+    maxAge: 600,
+  }),
 )
-app.use(express.json({ limit: '1mb' }))
-app.use(express.urlencoded({ extended: true, limit: '1mb' }))
+
+// Block cross-site state-changing requests from unknown origins outright
+// (CORS alone only hides the response; the request would still run).
+app.use((req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next()
+  const origin = req.headers.origin
+  if (origin && !allowedOrigins.has(origin)) {
+    res.status(403).json({ success: false, error: 'Origin not allowed' })
+    return
+  }
+  next()
+})
+
+app.use(globalLimiter)
+
+// Body size caps: JSON up to 1 MB (avatar data URLs), forms tiny.
+app.use(express.json({ limit: '1mb', strict: true }))
+app.use(express.urlencoded({ extended: false, limit: '10kb', parameterLimit: 20 }))
 app.use(cookieParser())
 
 if (env.isDev) {
   app.use(morgan('dev'))
+} else {
+  // Production access log without IPs, query strings or user agents.
+  morgan.token('path', (req) => String((req as { originalUrl?: string }).originalUrl || '').split('?')[0])
+  app.use(morgan(':method :path :status :res[content-length] - :response-time ms'))
 }
 
-app.use(globalLimiter)
+app.get('/sitemap.xml', sitemap)
+app.get('/api/sitemap.xml', sitemap)
 
 app.get('/health', (_req, res) => {
-  res.json({ success: true, message: 'SafeApply.AI API is running' })
+  res.json({ ok: true })
 })
 
 app.use('/api/auth', authRoutes)
@@ -53,6 +119,21 @@ app.use('/api/reviews', reviewRoutes)
 app.use('/api/analytics', analyticsRoutes)
 app.use('/api/admin', adminRoutes)
 app.use('/api/payments', paymentRoutes)
+app.use('/api/recruiter', recruiterRoutes)
+app.use('/api/jobs', jobRoutes)
+app.use('/api/messages', messageRoutes)
+app.use('/api/notifications', notificationRoutes)
+app.use('/api/freelance', freelanceRoutes)
+app.use('/api/billing', billingRoutes)
+app.use('/api/records', recordRoutes)
+app.use('/api/interviews', interviewRoutes)
+app.use('/api/progress', progressRoutes)
+app.use('/api/team', teamJoinRoutes)
+app.use('/api/talent', talentRoutes)
+app.use('/api/badge', badgeRoutes)
+app.use('/api/public', publicRoutes)
+app.use('/api/share', shareRoutes)
+app.use('/api/disputes', disputeRoutes)
 
 app.use((_req, res) => {
   res.status(404).json({ success: false, error: 'Route not found' })
@@ -60,10 +141,19 @@ app.use((_req, res) => {
 
 app.use(errorHandler)
 
-app.listen(env.port, () => {
-  console.log(`✅ SafeApply.AI backend running on port ${env.port}`)
-  console.log(`📍 Environment: ${env.nodeEnv}`)
-  console.log(`🌐 Frontend URL: ${env.frontendUrl}`)
+const server = app.listen(env.port, () => {
+  console.log(`SafeApply.AI backend running on port ${env.port} (${env.nodeEnv})`)
+  startScheduler()
+})
+
+// Slow-client protection (slowloris): cap how long headers/bodies may take.
+server.headersTimeout = 20_000
+server.requestTimeout = 90_000 // CV structuring streams for up to ~60s
+server.keepAliveTimeout = 5_000
+server.maxHeadersCount = 50
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection', reason instanceof Error ? reason.message : reason)
 })
 
 export default app

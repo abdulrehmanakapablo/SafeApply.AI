@@ -1,13 +1,22 @@
+// ============================================================
 // FILE: apps/backend/src/controllers/auth.controller.ts
-// PURPOSE: Auth controller — signup, login, refresh, logout, forgot/reset,
-//          get me, update me, change password, update notifications, delete account.
-// NOTE: Email verification is disabled for the pilot — signup creates a
-//       pre-verified user. Re-enable by flipping `email_confirm` to false and
-//       restoring the check in `login`.
+// PURPOSE: Auth controller — signup, login, refresh, logout,
+//          forgot/reset, get me, update me, change password,
+//          update notifications, delete account.
+//
+// DUAL-STORE PASSWORD MODEL (permanent):
+//   • auth.users.password       — Supabase Auth (authoritative)
+//   • public.users.password_hash — app's bcrypt mirror (fast login)
+//
+// Signup writes both. Login tries bcrypt first; if the mirror is
+// stale (sentinel '!' or bcrypt mismatch), it falls back to
+// Supabase Auth verification and self-heals the mirror.
+// ============================================================
 
 import { Request, Response } from 'express'
 import { supabaseAdmin } from '../config/supabase'
-import { hashPassword, comparePassword, hashToken } from '../utils/hash'
+import { hashPassword, comparePassword, hashToken, compareToken, burnPasswordCheck } from '../utils/hash'
+import { env } from '../config/env'
 import {
   generateAccessToken,
   generateRefreshToken,
@@ -15,33 +24,65 @@ import {
 } from '../utils/jwt'
 import { sanitizeObject } from '../utils/sanitize'
 import { sendSuccess, sendError } from '../utils/response'
+import { FREE_EMAIL_DOMAINS, emailDomain } from '../utils/recruiter'
+
+// Refresh cookie: httpOnly (JS can't read it), Secure in production,
+// SameSite=Strict (never sent on cross-site requests → no CSRF), and only
+// sent to the auth routes instead of every API call.
+const REFRESH_COOKIE = 'refresh_token'
+const refreshCookieOptions = {
+  httpOnly: true,
+  secure: env.isProd,
+  sameSite: 'strict' as const,
+  path: '/api/auth',
+}
+function setRefreshCookie(res: Response, token: string) {
+  res.cookie(REFRESH_COOKIE, token, { ...refreshCookieOptions, maxAge: 7 * 24 * 60 * 60 * 1000 })
+}
+function clearRefreshCookie(res: Response) {
+  res.clearCookie(REFRESH_COOKIE, refreshCookieOptions)
+  // Older builds set the cookie on path "/"; clear that copy too.
+  res.clearCookie(REFRESH_COOKIE, { ...refreshCookieOptions, path: '/' })
+}
 
 // ─── SIGNUP ───────────────────────────────────────────────
 export async function signup(req: Request, res: Response): Promise<void> {
   try {
-    const { full_name, email, password, phone } = sanitizeObject(req.body)
+    const body = sanitizeObject(req.body)
+    const full_name = body.full_name as string | undefined
+    const email = body.email as string | undefined
+    const password = body.password as string | undefined
+    const phone = body.phone as string | undefined
 
-    const normalizedEmail = (email as string).toLowerCase()
-    const normalizedName = (full_name as string).trim()
-    const normalizedPhone =
-      phone && typeof phone === 'string' ? phone : null
+    if (!email || !password || !full_name) {
+      sendError(res, 'Full name, email and password are required', 400)
+      return
+    }
+
+    const normalizedEmail = email.toLowerCase().trim()
+    const normalizedName = full_name.trim()
+    const role: 'user' | 'recruiter' | 'freelancer' | 'client' = ['recruiter', 'freelancer', 'client'].includes(body.role) ? body.role : 'user'
+
+    // Recruiters must use a company address: it's how we verify the employer.
+    if (role === 'recruiter' && FREE_EMAIL_DOMAINS.has(emailDomain(normalizedEmail))) {
+      sendError(res, 'Use your work email (for example you@yourcompany.com) to sign up as a recruiter.', 400)
+      return
+    }
+    const normalizedPhone = phone && typeof phone === 'string' ? phone : null
 
     // Reject if email already taken
     const { data: existingUser } = await supabaseAdmin
       .from('users')
       .select('id')
       .eq('email', normalizedEmail)
-      .single()
+      .maybeSingle()
 
     if (existingUser) {
       sendError(res, 'An account with this email already exists', 409)
       return
     }
 
-    // Create user in Supabase Auth.
-    // - email_confirm: true skips the verification email for the pilot.
-    // - user_metadata is read by the on_auth_user_created trigger, which
-    //   creates the matching public.users row automatically.
+    // Create user in Supabase Auth
     const { data: authData, error: authError } =
       await supabaseAdmin.auth.admin.createUser({
         email: normalizedEmail,
@@ -59,15 +100,12 @@ export async function signup(req: Request, res: Response): Promise<void> {
       return
     }
 
-    // Hash password for our own users row (defense in depth — Supabase also
-    // stores its own hash, but we keep one in case we ever migrate auth).
+    // Hash the password for our own users row
     const passwordHash = await hashPassword(password)
 
-    // Upsert — the trigger has almost certainly already created the row.
-    // - If the row exists: fill in password_hash and anything the trigger
-    //   couldn't populate. Do NOT touch role/plan here — the trigger owns
-    //   those and decides first-admin promotion.
-    // - If the trigger somehow didn't run: this inserts the full row.
+    // Upsert — the trigger has almost certainly created the row already.
+    // We only fill in what the trigger couldn't (password_hash, phone).
+    // role and plan stay untouched (trigger owns first-admin promotion).
     const { error: upsertError } = await supabaseAdmin
       .from('users')
       .upsert(
@@ -82,11 +120,40 @@ export async function signup(req: Request, res: Response): Promise<void> {
       )
 
     if (upsertError) {
-      // Roll back — delete the auth user so the account isn't half-created
       console.error('Users upsert error:', upsertError)
       await supabaseAdmin.auth.admin.deleteUser(authData.user.id)
       sendError(res, 'Failed to create account', 500)
       return
+    }
+
+    // Verify the write actually landed — belt and suspenders
+    const { data: verify } = await supabaseAdmin
+      .from('users')
+      .select('password_hash')
+      .eq('id', authData.user.id)
+      .single()
+
+    if (!verify?.password_hash || verify.password_hash === '!') {
+      console.error(
+        'Signup succeeded but password_hash was not persisted. Retrying...',
+      )
+
+      const { error: retryError } = await supabaseAdmin
+        .from('users')
+        .update({ password_hash: passwordHash })
+        .eq('id', authData.user.id)
+
+      if (retryError) {
+        console.error('Retry update failed:', retryError)
+        await supabaseAdmin.auth.admin.deleteUser(authData.user.id)
+        sendError(res, 'Failed to create account', 500)
+        return
+      }
+    }
+
+    if (role !== 'user') {
+      // Only ever changes a plain user row; never touches an admin row.
+      await supabaseAdmin.from('users').update({ role }).eq('id', authData.user.id).eq('role', 'user')
     }
 
     sendSuccess(res, null, 201, 'Account created successfully')
@@ -97,30 +164,80 @@ export async function signup(req: Request, res: Response): Promise<void> {
 }
 
 // ─── LOGIN ────────────────────────────────────────────────
+// Verify order:
+//   1. bcrypt against public.users.password_hash (fast path)
+//   2. If sentinel/mismatch/missing → Supabase Auth signInWithPassword
+//   3. On Supabase success → self-heal public.users.password_hash
 export async function login(req: Request, res: Response): Promise<void> {
   try {
     const { email, password } = req.body
 
+    if (!email || !password) {
+      sendError(res, 'Email and password are required', 400)
+      return
+    }
+
+    const normalizedEmail = (email as string).toLowerCase().trim()
+
     const { data: user, error } = await supabaseAdmin
       .from('users')
       .select(
-        'id, email, full_name, role, plan, password_hash, avatar_url, job_title, location, bio, email_verified, created_at'
+        'id, email, full_name, role, plan, password_hash, avatar_url, job_title, location, bio, email_verified, created_at',
       )
-      .eq('email', (email as string).toLowerCase())
-      .single()
+      .eq('email', normalizedEmail)
+      .maybeSingle()
 
-    // Same error for wrong email or wrong password — prevents user enumeration
-    if (error || !user || !user.password_hash) {
+    if (error || !user) {
+      // Spend the same time as a real check so timing can't reveal which
+      // emails are registered.
+      await burnPasswordCheck(String(password))
       sendError(res, 'Invalid email or password', 401)
       return
     }
 
-    const passwordMatch = await comparePassword(password, user.password_hash)
-    if (!passwordMatch) {
-      sendError(res, 'Invalid email or password', 401)
-      return
+    // ── Step 1: try the fast path (bcrypt against local hash) ──
+    let passwordValid = false
+    const localHash = user.password_hash
+
+    if (localHash && localHash !== '!' && localHash.length >= 20) {
+      try {
+        passwordValid = await comparePassword(password, localHash)
+      } catch {
+        passwordValid = false
+      }
     }
 
+    // ── Step 2: fall back to Supabase Auth ──
+    if (!passwordValid) {
+
+      const { data: signInData, error: signInError } =
+        await supabaseAdmin.auth.signInWithPassword({
+          email: normalizedEmail,
+          password,
+        })
+
+      if (signInError || !signInData.user) {
+        sendError(res, 'Invalid email or password', 401)
+        return
+      }
+
+      passwordValid = true
+
+      // ── Step 3: self-heal the local hash ──
+      try {
+        const freshHash = await hashPassword(password)
+        const { error: healError } = await supabaseAdmin
+          .from('users')
+          .update({ password_hash: freshHash, updated_at: new Date().toISOString() })
+          .eq('id', user.id)
+
+        if (healError) console.warn('[login] hash self-heal failed')
+      } catch (healErr) {
+        console.warn('[login] hash self-heal threw:', healErr)
+      }
+    }
+
+    // ── Issue tokens ──
     const tokenPayload = {
       userId: user.id,
       email: user.email,
@@ -136,12 +253,7 @@ export async function login(req: Request, res: Response): Promise<void> {
       .update({ refresh_token_hash: refreshTokenHash })
       .eq('id', user.id)
 
-    res.cookie('refresh_token', refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    })
+    setRefreshCookie(res, refreshToken)
 
     sendSuccess(res, {
       user: {
@@ -177,6 +289,7 @@ export async function refreshToken(req: Request, res: Response): Promise<void> {
     try {
       payload = verifyRefreshToken(token)
     } catch {
+      clearRefreshCookie(res)
       sendError(res, 'Invalid refresh token', 401)
       return
     }
@@ -185,21 +298,23 @@ export async function refreshToken(req: Request, res: Response): Promise<void> {
       .from('users')
       .select('id, email, role, plan, refresh_token_hash')
       .eq('id', payload.userId)
-      .single()
+      .maybeSingle()
 
     if (error || !user || !user.refresh_token_hash) {
       sendError(res, 'Invalid refresh token', 401)
       return
     }
 
-    const { compareToken } = await import('../utils/hash')
     const tokenMatch = await compareToken(token, user.refresh_token_hash)
 
     if (!tokenMatch) {
+      // A valid-looking but already-rotated token = possible theft.
+      // Revoke the session everywhere.
       await supabaseAdmin
         .from('users')
         .update({ refresh_token_hash: null })
         .eq('id', user.id)
+      clearRefreshCookie(res)
       sendError(res, 'Invalid refresh token', 401)
       return
     }
@@ -219,12 +334,7 @@ export async function refreshToken(req: Request, res: Response): Promise<void> {
       .update({ refresh_token_hash: newRefreshTokenHash })
       .eq('id', user.id)
 
-    res.cookie('refresh_token', newRefreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    })
+    setRefreshCookie(res, newRefreshToken)
 
     sendSuccess(res, { accessToken: newAccessToken })
   } catch (error) {
@@ -250,11 +360,7 @@ export async function logout(req: Request, res: Response): Promise<void> {
       }
     }
 
-    res.clearCookie('refresh_token', {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-    })
+    clearRefreshCookie(res)
 
     sendSuccess(res, null, 200, 'Logged out successfully')
   } catch (error) {
@@ -272,26 +378,22 @@ export async function forgotPassword(req: Request, res: Response): Promise<void>
       .from('users')
       .select('id')
       .eq('email', (email as string).toLowerCase())
-      .single()
+      .maybeSingle()
 
     if (user) {
-      // Supabase sends the recovery email automatically.
-      // The email link points to the redirectTo URL with the recovery token
-      // in the URL fragment (#access_token=...&type=recovery).
       await supabaseAdmin.auth.resetPasswordForEmail(
         (email as string).toLowerCase(),
         {
-          redirectTo: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/reset-password`,
-        }
+          redirectTo: `${env.frontendUrl}/reset-password`,
+        },
       )
     }
 
-    // Same response regardless of whether the email exists
     sendSuccess(
       res,
       null,
       200,
-      'If an account exists with this email, you will receive a reset link.'
+      'If an account exists with this email, you will receive a reset link.',
     )
   } catch (error) {
     console.error('Forgot password error:', error)
@@ -304,8 +406,6 @@ export async function resetPassword(req: Request, res: Response): Promise<void> 
   try {
     const { token, new_password } = req.body
 
-    // `token` is the access_token Supabase put in the recovery link fragment.
-    // Verify it belongs to a real user via the admin API.
     const { data, error } = await supabaseAdmin.auth.getUser(token)
 
     if (error || !data.user) {
@@ -315,7 +415,15 @@ export async function resetPassword(req: Request, res: Response): Promise<void> 
 
     const passwordHash = await hashPassword(new_password)
 
-    // Update our own hash + invalidate all existing sessions
+    // Update BOTH stores so future logins hit the fast path
+    const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(data.user.id, {
+      password: new_password,
+    })
+    if (updateError) {
+      sendError(res, 'Could not reset the password. Request a new link.', 400)
+      return
+    }
+
     await supabaseAdmin
       .from('users')
       .update({
@@ -323,11 +431,6 @@ export async function resetPassword(req: Request, res: Response): Promise<void> 
         refresh_token_hash: null,
       })
       .eq('id', data.user.id)
-
-    // Update the Supabase auth password
-    await supabaseAdmin.auth.admin.updateUserById(data.user.id, {
-      password: new_password,
-    })
 
     sendSuccess(res, null, 200, 'Password reset successfully. Please log in.')
   } catch (error) {
@@ -342,10 +445,10 @@ export async function getMe(req: Request, res: Response): Promise<void> {
     const { data: user, error } = await supabaseAdmin
       .from('users')
       .select(
-        'id, email, full_name, role, plan, avatar_url, job_title, location, bio, email_verified, created_at, notification_prefs'
+        'id, email, full_name, role, plan, avatar_url, job_title, location, bio, email_verified, created_at, notification_prefs',
       )
       .eq('id', req.user!.userId)
-      .single()
+      .maybeSingle()
 
     if (error || !user) {
       sendError(res, 'User not found', 404)
@@ -362,7 +465,7 @@ export async function getMe(req: Request, res: Response): Promise<void> {
 // ─── UPDATE ME ────────────────────────────────────────────
 export async function updateMe(req: Request, res: Response): Promise<void> {
   try {
-    const { full_name, job_title, location, bio, avatar_url } = req.body
+    const { full_name, job_title, location, bio, avatar_url } = sanitizeObject(req.body)
     const userId = req.user!.userId
 
     const updates: Record<string, unknown> = {
@@ -382,7 +485,7 @@ export async function updateMe(req: Request, res: Response): Promise<void> {
       .update(updates)
       .eq('id', userId)
       .select(
-        'id, email, full_name, role, plan, avatar_url, job_title, location, bio, email_verified, created_at, notification_prefs'
+        'id, email, full_name, role, plan, avatar_url, job_title, location, bio, email_verified, created_at, notification_prefs',
       )
       .single()
 
@@ -406,7 +509,7 @@ export async function changePassword(req: Request, res: Response): Promise<void>
     const userId = req.user!.userId
     const email = req.user!.email
 
-    // Verify current password
+    // Verify current password via Supabase Auth (authoritative source)
     const { data: signInData, error: signInError } =
       await supabaseAdmin.auth.signInWithPassword({
         email,
@@ -423,10 +526,10 @@ export async function changePassword(req: Request, res: Response): Promise<void>
       return
     }
 
-    // Update in Supabase Auth
+    // Update Supabase Auth
     const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(
       userId,
-      { password: new_password }
+      { password: new_password },
     )
 
     if (updateError) {
@@ -434,11 +537,15 @@ export async function changePassword(req: Request, res: Response): Promise<void>
       return
     }
 
-    // Update our own hash + invalidate all other sessions
+    // Update local mirror + invalidate other sessions
     const passwordHash = await hashPassword(new_password)
     await supabaseAdmin
       .from('users')
-      .update({ password_hash: passwordHash, refresh_token_hash: null })
+      .update({
+        password_hash: passwordHash,
+        refresh_token_hash: null,
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', userId)
 
     sendSuccess(res, null, 200, 'Password updated')
@@ -451,16 +558,16 @@ export async function changePassword(req: Request, res: Response): Promise<void>
 // ─── UPDATE NOTIFICATIONS ─────────────────────────────────
 export async function updateNotifications(
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> {
   try {
     const { weekly_summary, product_updates, saved_company_reviews } = req.body
     const userId = req.user!.userId
 
     const prefs = {
-      weekly_summary,
-      product_updates,
-      saved_company_reviews,
+      weekly_summary: Boolean(weekly_summary),
+      product_updates: Boolean(product_updates),
+      saved_company_reviews: Boolean(saved_company_reviews),
     }
 
     const { error } = await supabaseAdmin
@@ -488,7 +595,6 @@ export async function deleteAccount(req: Request, res: Response): Promise<void> 
   try {
     const userId = req.user!.userId
 
-    // Cascade rules will remove all related rows
     const { error } = await supabaseAdmin.auth.admin.deleteUser(userId)
 
     if (error) {
@@ -497,12 +603,7 @@ export async function deleteAccount(req: Request, res: Response): Promise<void> 
       return
     }
 
-    // Clear any refresh cookie
-    res.clearCookie('refresh_token', {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-    })
+    clearRefreshCookie(res)
 
     sendSuccess(res, null, 200, 'Account deleted')
   } catch (error) {

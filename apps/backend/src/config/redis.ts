@@ -21,7 +21,7 @@ class RedisClient {
     this.available = !!(this.url && this.token)
 
     if (!this.available) {
-      console.warn('⚠️  Redis not configured — caching disabled')
+      console.warn('Redis not configured: caching and the guest demo limit are disabled')
     }
   }
 
@@ -31,11 +31,11 @@ class RedisClient {
     if (!this.available) return null
 
     try {
-      const response = await fetch(`${this.url}/get/${key}`, {
+      const response = await fetch(`${this.url}/get/${encodeURIComponent(key)}`, {
         headers: { Authorization: `Bearer ${this.token}` },
       })
-      const data = await response.json()
-      return data.result
+      const data = (await response.json()) as { result?: string | null }
+      return data.result ?? null
     } catch {
       // Never crash the app because Redis failed
       return null
@@ -47,12 +47,16 @@ class RedisClient {
     if (!this.available) return
 
     try {
+      // Value goes in the POST body, not the URL: URLs end up in proxy and
+      // provider logs, and long values break URL length limits.
       const url = exSeconds
-        ? `${this.url}/set/${key}/${encodeURIComponent(value)}/ex/${exSeconds}`
-        : `${this.url}/set/${key}/${encodeURIComponent(value)}`
+        ? `${this.url}/set/${encodeURIComponent(key)}?EX=${Math.max(1, Math.floor(exSeconds))}`
+        : `${this.url}/set/${encodeURIComponent(key)}`
 
       await fetch(url, {
+        method: 'POST',
         headers: { Authorization: `Bearer ${this.token}` },
+        body: value,
       })
     } catch {
       // Silently fail — caching is best effort
@@ -64,7 +68,7 @@ class RedisClient {
     if (!this.available) return
 
     try {
-      await fetch(`${this.url}/del/${key}`, {
+      await fetch(`${this.url}/del/${encodeURIComponent(key)}`, {
         headers: { Authorization: `Bearer ${this.token}` },
       })
     } catch {

@@ -1,8 +1,8 @@
 // ============================================================
 // FILE: apps/backend/src/services/news.service.ts
-// PURPOSE: Fetches company news via NewsAPI
-// Returns last 30 days of news articles for a company
-// Results cached for 6 hours to preserve free tier quota
+// PURPOSE: Fetch company news via NewsAPI. Free tier allows a rolling
+//          30-day window only — older requests return 426.
+// Results cached 6h to preserve the free quota.
 // ============================================================
 
 import axios from 'axios'
@@ -21,48 +21,45 @@ interface NewsResult {
   source_url: string
 }
 
-// NewsAPI free tier only allows a rolling 30-day window.
-// Anything older returns 426 Upgrade Required.
-// https://newsapi.org/pricing
 const MAX_LOOKBACK_DAYS = 30
+const MAX_ARTICLES = 8
 
 export async function fetchCompanyNews(companyName: string): Promise<NewsResult> {
-  // Return empty result if NewsAPI not configured
-  if (!env.newsApiKey) {
-    return { articles: [], source_url: 'https://newsapi.org' }
-  }
+  const empty: NewsResult = { articles: [], source_url: 'https://newsapi.org' }
 
-  // Check cache first
-  const cached = await getCached<NewsResult>('news', companyName)
+  if (!env.newsApiKey || !companyName?.trim()) return empty
+
+  const cacheKey = companyName.trim()
+  const cached = await getCached<NewsResult>('news', cacheKey)
   if (cached) return cached
 
   try {
-    // Clamp to 30 days — NewsAPI free tier hard limit
-    const from = new Date(
-      Date.now() - MAX_LOOKBACK_DAYS * 24 * 60 * 60 * 1000,
-    )
+    const from = new Date(Date.now() - MAX_LOOKBACK_DAYS * 86_400_000)
       .toISOString()
       .split('T')[0]
 
-    const response = await axios.get('https://newsapi.org/v2/everything', {
+    const res = await axios.get('https://newsapi.org/v2/everything', {
       params: {
         q: `"${companyName}"`,
         from,
         sortBy: 'publishedAt',
         language: 'en',
-        pageSize: 10,
+        pageSize: MAX_ARTICLES,
         apiKey: env.newsApiKey,
       },
-      timeout: 8000,
+      timeout: 10000,
     })
 
-    const articles: NewsArticle[] = (response.data.articles || [])
-      .filter((a: Record<string, unknown>) => a.title && a.url)
-      .map((a: Record<string, unknown>) => ({
-        title: a.title as string,
-        source: (a.source as Record<string, string>)?.name || 'Unknown',
-        published_at: a.publishedAt as string,
-        url: a.url as string,
+    const articles: NewsArticle[] = (res.data?.articles || [])
+      .filter((a: { title?: string; url?: string }) => a.title && a.url)
+      .map((a: { title: string; source?: { name?: string }; publishedAt: string; url: string }) => ({
+        title: a.title,
+        source: a.source?.name || 'Unknown',
+        published_at: new Date(a.publishedAt).toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+        }),
+        url: a.url,
       }))
 
     const result: NewsResult = {
@@ -70,12 +67,17 @@ export async function fetchCompanyNews(companyName: string): Promise<NewsResult>
       source_url: `https://newsapi.org/v2/everything?q=${encodeURIComponent(companyName)}`,
     }
 
-    // Cache the result
-    await setCached('news', companyName, result, CACHE_TTL.NEWS)
-
+    await setCached('news', cacheKey, result, CACHE_TTL.NEWS)
     return result
   } catch (error) {
-    console.error('NewsAPI error:', error)
-    return { articles: [], source_url: 'https://newsapi.org' }
+    if (axios.isAxiosError(error)) {
+      const status = error.response?.status
+      if (status === 426) {
+        console.warn('[news] free-tier window exceeded for', companyName)
+      } else if (status === 429) {
+        console.warn('[news] rate limited')
+      }
+    }
+    return empty
   }
 }

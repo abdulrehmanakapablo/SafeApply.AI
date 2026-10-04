@@ -1,39 +1,36 @@
 // FILE: src/components/shared/ProtectedRoute.tsx
-// PURPOSE: Redirects to /login if user is not authenticated.
-//
-// NOTE: Dev-mode auto-login was removed. It was added early on to preview
-// dashboard pages against an empty DB, but it defeated the auth guard in
-// dev (every unauthenticated visitor was silently logged in as a fake
-// admin) and the fake 'dev-token' broke every authenticated API call.
-//
-// If you need to preview dashboard pages without a real account, create
-// a real one via /signup. If you truly want a dev bypass later, gate it
-// behind an explicit env var like VITE_DEV_AUTH_BYPASS=true AND check
-// that the request is against a local backend — not import.meta.env.DEV,
-// which is true for every `vite` dev session.
+// PURPOSE: Logged-in gate with strict portal isolation.
+//   `portal`: only accounts living in that portal may render it. A recruiter
+//   can never open the seeker portal, and vice versa. Admins are locked to
+//   their active portal; any other portal URL bounces back to it.
+//   `roles`: extra role restriction for single pages.
+//   The backend enforces roles again on every API call; this is the UI layer.
 
-import { ReactNode } from 'react'
+import { useEffect, type ReactNode } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
-import { useAuthStore } from '../../store/authStore'
+import { useAuthStore, useIsAuthed } from '../../store/authStore'
+import { activePortal, homeFor, type Portal } from '../../lib/roles'
 
-export default function ProtectedRoute({ children }: { children: ReactNode }) {
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
+export default function ProtectedRoute({ children, portal, roles }: { children: ReactNode; portal?: Portal; roles?: string[] }) {
+  const authed = useIsAuthed()
+  const role = useAuthStore((s) => s.user?.role)
+  const adminPortal = useAuthStore((s) => s.adminPortal)
+  const setAdminPortal = useAuthStore((s) => s.setAdminPortal)
   const location = useLocation()
 
-  // A real access token must be present too — the Zustand flag alone can
-  // be stale (persisted across sessions, or set by old dev-bypass code).
-  const hasToken =
-    typeof window !== 'undefined' && Boolean(localStorage.getItem('access_token'))
+  // Admin sessions from before portal locking: lock to the first portal entered.
+  const claim = role === 'admin' && !adminPortal && portal ? portal : null
+  useEffect(() => {
+    if (claim) setAdminPortal(claim)
+  }, [claim, setAdminPortal])
 
-  if (!isAuthenticated || !hasToken) {
-    return (
-      <Navigate
-        to="/login"
-        replace
-        state={{ from: location.pathname + location.search }}
-      />
-    )
+  if (!authed) {
+    const from = encodeURIComponent(location.pathname + location.search)
+    return <Navigate to={`/login?from=${from}`} replace />
   }
+  const effective = claim ?? adminPortal
+  if (portal && activePortal(role, effective) !== portal) return <Navigate to={homeFor(role, effective)} replace />
+  if (roles && !roles.includes(role || '')) return <Navigate to={homeFor(role, effective)} replace />
 
   return <>{children}</>
 }

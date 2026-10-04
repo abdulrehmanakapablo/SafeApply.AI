@@ -1,83 +1,107 @@
 // ============================================================
 // FILE: apps/backend/src/services/serpapi.service.ts
-// PURPOSE: Ghost posting detection via Google Search
-// Searches for how many times a role appeared publicly
-// Uses SerpAPI free tier — 100 searches/month
+// PURPOSE: Detect ghost job postings by searching Google Jobs for
+//          the same company+title across platforms.
+// Returns { postings, source_url } where postings are dated occurrences.
 // ============================================================
 
+import { SEARCH_USD, budgetState, recordSpend } from '../utils/budget'
 import axios from 'axios'
 import { env } from '../config/env'
-import { getCached, setCached, CACHE_TTL } from './cache.service'
 
-interface GhostPosting {
+export interface GhostPosting {
   date: string
   platform: string
   url: string
 }
 
-interface GhostPostingResult {
+export interface GhostPostingData {
   postings: GhostPosting[]
   source_url: string
 }
 
+const EMPTY: GhostPostingData = {
+  postings: [],
+  source_url: 'https://www.google.com/search?q=jobs',
+}
+
+interface SerpJobResult {
+  title?: string
+  company_name?: string
+  location?: string
+  detected_extensions?: {
+    posted_at?: string
+    schedule_type?: string
+    work_from_home?: boolean
+  }
+  share_link?: string
+  apply_options?: Array<{ title?: string; link?: string }>
+  via?: string
+}
+
 export async function detectGhostPosting(
   companyName: string,
-  jobTitle: string
-): Promise<GhostPostingResult> {
-  const cacheKey = `${companyName}-${jobTitle}`
-  const sourceUrl = `https://www.google.com/search?q="${encodeURIComponent(companyName)}"+"${encodeURIComponent(jobTitle)}"`
-
-  const defaultResult: GhostPostingResult = {
-    postings: [],
-    source_url: sourceUrl,
-  }
-
-  if (!env.serpApiKey) return defaultResult
-
-  // Check cache first
-  const cached = await getCached<GhostPostingResult>('serpapi', cacheKey)
-  if (cached) return cached
+  jobTitle: string,
+): Promise<GhostPostingData> {
+  if (!env.serpApiKey || !companyName || !jobTitle) return EMPTY
+  if ((await budgetState()).hardStopped) return EMPTY
 
   try {
-    const response = await axios.get('https://serpapi.com/search', {
+    const query = `${jobTitle} ${companyName}`
+    const res = await axios.get('https://serpapi.com/search.json', {
       params: {
-        engine: 'google',
-        q: `"${companyName}" "${jobTitle}" job`,
+        engine: 'google_jobs',
+        q: query,
+        hl: 'en',
         api_key: env.serpApiKey,
-        num: 10,
-        tbs: 'qdr:y', // Last year results only
       },
-      timeout: 10000,
+      timeout: 12000,
+    })
+    void recordSpend('search', SEARCH_USD)
+
+    const jobs: SerpJobResult[] = res.data?.jobs_results || []
+
+    // Filter to jobs whose company_name roughly matches what we searched for
+    const companyLower = companyName.toLowerCase().trim()
+    const matched = jobs.filter((j) => {
+      const c = (j.company_name || '').toLowerCase().trim()
+      return c.includes(companyLower) || companyLower.includes(c)
     })
 
-    const organicResults = response.data.organic_results || []
+    const postings: GhostPosting[] = matched.slice(0, 8).map((j) => {
+      const applyUrl =
+        j.apply_options?.[0]?.link ||
+        j.share_link ||
+        `https://www.google.com/search?q=${encodeURIComponent(
+          `${j.title || jobTitle} ${j.company_name || companyName}`,
+        )}+jobs`
 
-    // Extract job posting results with dates
-    const postings: GhostPosting[] = organicResults
-      .filter((r: Record<string, unknown>) => r.link && r.date)
-      .map((r: Record<string, unknown>) => {
-        // Determine platform from URL
-        const url = r.link as string
-        let platform = 'Unknown'
-        if (url.includes('linkedin.com')) platform = 'LinkedIn'
-        else if (url.includes('indeed.com')) platform = 'Indeed'
-        else if (url.includes('glassdoor.com')) platform = 'Glassdoor'
-        else if (url.includes('greenhouse.io')) platform = 'Greenhouse'
-        else if (url.includes('lever.co')) platform = 'Lever'
-        else if (url.includes('workday.com')) platform = 'Workday'
+      return {
+        date: j.detected_extensions?.posted_at || 'Recently',
+        platform: j.via || j.apply_options?.[0]?.title || 'Google Jobs',
+        url: applyUrl,
+      }
+    })
 
-        return {
-          date: r.date as string,
-          platform,
-          url,
-        }
-      })
-
-    const result: GhostPostingResult = { postings, source_url: sourceUrl }
-    await setCached('serpapi', cacheKey, result, CACHE_TTL.SERPAPI)
-    return result
+    return {
+      postings,
+      source_url: `https://www.google.com/search?q=${encodeURIComponent(
+        `${jobTitle} ${companyName} jobs`,
+      )}`,
+    }
   } catch (error) {
-    console.error('SerpAPI error:', error)
-    return defaultResult
+    if (axios.isAxiosError(error)) {
+      const status = error.response?.status
+      if (status === 401 || status === 403) {
+        console.warn('[serpapi] auth failed — check SERP_API_KEY')
+      } else if (status === 429) {
+        console.warn('[serpapi] rate limit hit (100 searches/month free tier)')
+      } else {
+        console.warn('[serpapi] request failed:', status)
+      }
+    } else {
+      console.warn('[serpapi] unexpected error:', error)
+    }
+    return EMPTY
   }
 }

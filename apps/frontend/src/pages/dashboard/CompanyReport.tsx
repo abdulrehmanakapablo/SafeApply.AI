@@ -1,962 +1,583 @@
 // FILE: src/pages/dashboard/CompanyReport.tsx
-// ROUTE: /dashboard/company-report (auth required)
-// BACKEND: POST /api/reports
-// PURPOSE: Company intelligence report — paste JD or enter company/title,
-//          then view extracted JD data, Crunchbase funding, GitHub tech stack,
-//          ghost posting timeline, news, and Glassdoor data.
+// ROUTE: /dashboard/company-report        (new report)
+//        /dashboard/company-report/:id    (saved report, shareable)
+// BACKEND: POST /api/reports, GET /api/reports/:id
+// Shows exactly what the sources returned. No invented "probability" scores.
 
-import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import toast from 'react-hot-toast'
+import { motion, useReducedMotion } from 'framer-motion'
 import SEO from '../../components/SEO'
+import { Reveal } from '../../components/motion/Reveal'
 import {
-  runReport,
-  type ExtractedJD,
-  type NewsArticle,
-  type GitHubData,
-  type GhostPosting,
-  type GlassdoorData,
-  type ReportData,
-} from '../../api/reports'
+  Alert,
+  Badge,
+  Button,
+  ButtonLink,
+  Card,
+  CardHeader,
+  EmptyState,
+  Field,
+  Icon,
+  PageContainer,
+  PageHeader,
+  Skeleton,
+  TextArea,
+  cn,
+  formatDate,
+} from '../../components/ui'
+import { getReport, runReport, type CompanyReport as Report, type ExtractedJD, type GitHubData } from '../../api/reports'
+import { shareReport, unshareReport } from '../../api/growth'
+import { apiError } from '../../lib/axios'
 
-// ─── View model (flattened for rendering) ────────────────
-interface ReportView {
-  extracted: ExtractedJD
-  company: {
-    founded: string
-    funding_stage: string
-    total_raised: string
-    last_round: string
-    employees: string
-    investors: string
-    source_url: string
-  }
-  github: GitHubData & {
-    jd_tech: { name: string; status: 'confirmed' | 'in_code' | 'missing' }[]
-  }
-  ghost: {
-    postings: GhostPosting[]
-    probability: number
-    source_url: string
-  }
-  news: {
-    articles: NewsArticle[]
-    sentiment: number
-    source_url: string
-  }
-  reddit: {
-    sentiment: 'mostly_positive' | 'mixed' | 'mostly_negative'
-    total: number
-    subreddits: { name: string; mentions: number; pos_pct: number; url: string }[]
-    source_url: string
-  }
-  glassdoor: GlassdoorData
-  telemetry_sources: string[]
+const JD_MAX = 10000
+const REPOST_ATTENTION = 3
+
+const EMPTY_JD: ExtractedJD = {
+  role: null,
+  seniority: null,
+  experience_years: null,
+  required_skills: [],
+  nice_to_have_skills: [],
+  salary_mentioned: false,
+  salary_text: null,
+  location: null,
+  remote: null,
+  employment_type: null,
+  company_name: null,
 }
 
-// ─── Demo fallback (pilot mode) ──────────────────────────
-const DEMO_VIEW: ReportView = {
-  extracted: {
-    role: null,
-    seniority: null,
-    experience_years: null,
-    required_skills: [],
-    nice_to_have_skills: [],
-    salary_mentioned: false,
-    salary_text: null,
-    location: null,
-    remote: null,
-    employment_type: null,
-    company_name: null,
-  },
-  company: {
-    founded: '—',
-    funding_stage: '—',
-    total_raised: '—',
-    last_round: '—',
-    employees: '—',
-    investors: '—',
-    source_url: 'https://crunchbase.com',
-  },
-  github: {
-    org_found: false,
-    public_repos: 0,
-    last_commit: null,
-    languages: [],
-    source_url: 'https://github.com',
-    jd_tech: [],
-  },
-  ghost: {
-    postings: [],
-    probability: 0,
-    source_url: 'https://google.com',
-  },
-  news: {
-    articles: [],
-    sentiment: 0,
-    source_url: 'https://newsapi.org',
-  },
-  reddit: {
-    sentiment: 'mixed',
-    total: 0,
-    subreddits: [],
-    source_url: 'https://reddit.com',
-  },
-  glassdoor: {
-    overall_rating: null,
-    interview_difficulty: null,
-    offer_rate: null,
-    recommend_percent: null,
-    source_url: 'https://glassdoor.com',
-  },
-  telemetry_sources: [],
+const EMPTY_GH: GitHubData = { org_found: false, public_repos: 0, last_commit: null, languages: [], source_url: '' }
+
+type TechStatus = 'both' | 'code_only' | 'ad_only'
+
+function techCheck(skills: string[], langs: string[]): Array<{ name: string; status: TechStatus }> {
+  const L = new Set(langs.map((l) => l.toLowerCase()))
+  const S = new Set(skills.map((s) => s.toLowerCase()))
+  return [
+    ...skills.map((s) => ({ name: s, status: (L.has(s.toLowerCase()) ? 'both' : 'ad_only') as TechStatus })),
+    ...langs.filter((l) => !S.has(l.toLowerCase())).map((l) => ({ name: l, status: 'code_only' as TechStatus })),
+  ]
 }
 
-// ─── Transform backend report_data → view model ──────────
-function toView(data: ReportData): ReportView {
-  return {
-    ...DEMO_VIEW,
-    extracted: (data.extracted_jd as ExtractedJD) || DEMO_VIEW.extracted,
-    github: data.github
-      ? { ...DEMO_VIEW.github, ...data.github, jd_tech: DEMO_VIEW.github.jd_tech }
-      : DEMO_VIEW.github,
-    ghost: data.ghost_posting
-      ? {
-          postings: data.ghost_posting.postings || [],
-          probability: DEMO_VIEW.ghost.probability,
-          source_url: data.ghost_posting.source_url || DEMO_VIEW.ghost.source_url,
-        }
-      : DEMO_VIEW.ghost,
-    news: data.news
-      ? {
-          articles: data.news.articles || [],
-          sentiment: DEMO_VIEW.news.sentiment,
-          source_url: data.news.source_url || DEMO_VIEW.news.source_url,
-        }
-      : DEMO_VIEW.news,
-    glassdoor: (data.glassdoor as GlassdoorData) || DEMO_VIEW.glassdoor,
-  }
-}
-
-// ─── Component ────────────────────────────────────────────
 export default function CompanyReport() {
-  const [jdText, setJdText] = useState('')
-  const [companyName, setCompanyName] = useState('')
-  const [jobTitle, setJobTitle] = useState('')
+  const { id } = useParams<{ id?: string }>()
+  const navigate = useNavigate()
+  const [report, setReport] = useState<Report | null>(null)
+  const [loadingSaved, setLoadingSaved] = useState(Boolean(id))
+  const [loadError, setLoadError] = useState('')
 
-  const [view, setView] = useState<ReportView>(DEMO_VIEW)
+  useEffect(() => {
+    if (!id) {
+      setReport(null)
+      setLoadingSaved(false)
+      return
+    }
+    // Already showing this one (just created) — don't refetch.
+    if (report?.id === id) return
+    let cancelled = false
+    setLoadingSaved(true)
+    setLoadError('')
+    getReport(id)
+      .then((res) => {
+        if (cancelled) return
+        if (res.success && res.data) setReport(res.data)
+        else setLoadError(res.error || 'Report not found')
+      })
+      .catch((err) => !cancelled && setLoadError(apiError(err, 'Report not found')))
+      .finally(() => !cancelled && setLoadingSaved(false))
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id])
+
+  if (id && loadingSaved) return <ReportSkeleton />
+
+  if (id && !report) {
+    return (
+      <PageContainer>
+        <SEO title="Report not found | SafeApply.AI" description="Report not found" path="/dashboard/company-report" noindex />
+        <Card padded={false}>
+          <EmptyState
+            icon="search_off"
+            title="We can’t find that report"
+            body={loadError && loadError !== 'Report not found' ? loadError : 'It may have been deleted, or it belongs to a different account.'}
+            action={
+              <div className="flex flex-wrap justify-center gap-2">
+                <ButtonLink to="/dashboard/company-report/history" variant="secondary">
+                  Report history
+                </ButtonLink>
+                <ButtonLink to="/dashboard/company-report">New report</ButtonLink>
+              </div>
+            }
+          />
+        </Card>
+      </PageContainer>
+    )
+  }
+
+  if (report) {
+    return (
+      <ReportView
+        report={report}
+        onNew={() => {
+          setReport(null)
+          navigate('/dashboard/company-report')
+        }}
+      />
+    )
+  }
+
+  return (
+    <NewReportForm
+      onDone={(r) => {
+        setReport(r)
+        if (r.id) navigate(`/dashboard/company-report/${r.id}`, { replace: true })
+      }}
+    />
+  )
+}
+
+// ─── Form ────────────────────────────────────────────────
+function NewReportForm({ onDone }: { onDone: (r: Report) => void }) {
+  const [jd, setJd] = useState('')
+  const [company, setCompany] = useState('')
+  const [role, setRole] = useState('')
   const [running, setRunning] = useState(false)
-  const [refreshedAt, setRefreshedAt] = useState('')
-  const [savedToBackend, setSavedToBackend] = useState(false)
-  const [shareCopied, setShareCopied] = useState(false)
+  const [error, setError] = useState('')
 
-  async function handleRunReport() {
-    if (running) return
+  const can = (jd.trim().length > 0 || company.trim().length > 0) && jd.length <= JD_MAX && !running
+
+  async function submit(e: FormEvent) {
+    e.preventDefault()
+    if (!can) {
+      if (!jd.trim() && !company.trim()) setError('Paste a job post or enter a company name.')
+      return
+    }
     setRunning(true)
-
+    setError('')
     try {
       const res = await runReport({
-        jd_text: jdText.trim() || undefined,
-        company_name: companyName.trim() || undefined,
-        job_title: jobTitle.trim() || undefined,
+        jd_text: jd.trim() || undefined,
+        company_name: company.trim() || undefined,
+        job_title: role.trim() || undefined,
       })
-
-      if (res.success && res.data) {
-        setView(toView(res.data.report_data))
-        setSavedToBackend(true)
-      } else {
-        setSavedToBackend(false)
-      }
-    } catch {
-      setSavedToBackend(false)
+      if (res.success && res.data) onDone(res.data)
+      else setError(res.error || 'The report didn’t finish. Try again in a minute.')
+    } catch (err) {
+      setError(apiError(err, 'The report didn’t finish. Try again in a minute.'))
     } finally {
       setRunning(false)
-      setRefreshedAt('Data refreshed just now')
     }
   }
-
-  async function handleSave() {
-    if (savedToBackend) return
-    setSavedToBackend(true)
-    setTimeout(() => setSavedToBackend(false), 2200)
-  }
-
-  function handleShare() {
-    setShareCopied(true)
-    try {
-      navigator.clipboard?.writeText(window.location.href)
-    } catch {
-      // ignore clipboard failure
-    }
-    setTimeout(() => setShareCopied(false), 2000)
-  }
-
-  const telemetryLine = running
-    ? 'Querying live endpoints across Crunchbase, GitHub API, SerpAPI...'
-    : `Report Generated • Queried: ${view.telemetry_sources.join(' • ')}`
 
   return (
     <>
-      <SEO
-        title="Company Report | SafeApply.AI"
-        description="Run a cited company intelligence report — extracted JD data, funding, tech stack, ghost posting detection, news, and reviews."
-        path="/dashboard/company-report"
-        noindex
-      />
-
-      <div className="w-full px-4 sm:px-6 py-6 flex flex-col gap-6 pb-16">
-
-        {/* ── Top telemetry strip ─────────────────────── */}
-        <div className="flex flex-wrap items-center justify-between gap-3 py-2 border-b border-[#1A1A1A] text-xs">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="w-2 h-2 rounded-full bg-[#22c55e] animate-pulse" />
-            <span className="font-mono uppercase tracking-wider text-white">
-              OSINT Engine V4.2
-            </span>
-            <span className="text-[#353534]">/</span>
-            <span className="text-[#737373]">
-              Node: us-east-telemetry-09
-            </span>
-          </div>
-          <div className="flex items-center gap-4 font-mono text-[#737373]">
-            <span>LATENCY: 42ms</span>
-            <span>SANDBOX: ACTIVE</span>
-          </div>
-        </div>
-
-        {/* ── Input section ────────────────────────────── */}
-        <section className="bg-[#0D0D0D] border border-[#1A1A1A] rounded-xl p-6 sm:p-8">
-          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-6">
-            <div className="flex flex-col">
-              <h2 className="text-white text-xl font-bold tracking-tight">
-                Company Intelligence Report
-              </h2>
-              <p className="text-[#737373] text-sm mt-1">
-                Paste a full job description or enter company name and role manually
-              </p>
-            </div>
-            <Link
-              to="/dashboard/company-report/history"
-              className="inline-flex items-center gap-1.5 bg-[#0D0D0D] border border-[#1A1A1A] hover:border-[#22c55e]/50 hover:text-[#22c55e] text-white text-xs font-semibold px-3 py-2 rounded-lg transition-colors self-start shrink-0"
-            >
-              <span className="material-symbols-outlined text-[16px]">
-                history
-              </span>
-              View History
-            </Link>
-          </div>
-
-          <div className="flex flex-col lg:flex-row gap-6 items-stretch">
-            {/* Left: textarea */}
-            <div className="flex-1 flex flex-col">
-              <label
-                htmlFor="jd-input"
-                className="text-[#737373] text-[11px] font-semibold uppercase tracking-wider mb-2"
-              >
-                Job Description Raw Payload
-              </label>
-              <textarea
-                id="jd-input"
-                value={jdText}
-                onChange={(e) => setJdText(e.target.value)}
-                rows={5}
-                placeholder="Paste full job description here"
-                className="w-full h-[140px] bg-black border border-[#1A1A1A] text-white font-mono text-xs p-3 rounded-md focus:border-[#22c55e] focus:outline-none transition-colors resize-none placeholder-[#737373]"
+      <SEO title="New company report | SafeApply.AI" description="Run a company report." path="/dashboard/company-report" noindex />
+      <PageContainer>
+        <PageHeader
+          title="Check a company"
+          description="Paste the job post, or just the company name. Add the role to search for repeat postings."
+          actions={
+            <ButtonLink to="/dashboard/company-report/history" variant="secondary" icon="history">
+              History
+            </ButtonLink>
+          }
+        />
+        <form onSubmit={submit} noValidate>
+          <Card className="grid lg:grid-cols-[1.4fr_1fr] gap-6">
+            <TextArea
+              label="Job post"
+              optional
+              rows={12}
+              value={jd}
+              onChange={(e) => {
+                setJd(e.target.value)
+                if (error) setError('')
+              }}
+              placeholder="Paste the full posting: title, responsibilities, requirements, location, pay."
+              hint={`${jd.length.toLocaleString()} / ${JD_MAX.toLocaleString()} characters`}
+              error={jd.length > JD_MAX ? `Too long by ${(jd.length - JD_MAX).toLocaleString()} characters` : undefined}
+              className="min-h-[260px] text-[13.5px]"
+            />
+            <div className="flex flex-col gap-5">
+              <Field
+                label="Company"
+                value={company}
+                onChange={(e) => {
+                  setCompany(e.target.value)
+                  if (error) setError('')
+                }}
+                placeholder="e.g. Shopify"
+                hint="Used for news and code activity."
+                maxLength={200}
               />
-            </div>
-
-            {/* Or divider */}
-            <div className="flex lg:flex-col items-center justify-center px-2 lg:px-6 relative my-2 lg:my-0">
-              <div className="hidden lg:block w-px h-full bg-[#1A1A1A] absolute inset-y-0" />
-              <div className="lg:hidden w-full h-px bg-[#1A1A1A] absolute inset-x-0" />
-              <span className="bg-[#0D0D0D] px-3 py-1 text-[#737373] text-[11px] font-semibold uppercase border border-[#1A1A1A] rounded-full z-10">
-                or
-              </span>
-            </div>
-
-            {/* Right: stacked inputs */}
-            <div className="flex-1 flex flex-col justify-between gap-3">
-              <div className="flex flex-col">
-                <label
-                  htmlFor="company-name"
-                  className="text-[#737373] text-[11px] font-semibold uppercase tracking-wider mb-2"
-                >
-                  Company Name
-                </label>
-                <input
-                  id="company-name"
-                  type="text"
-                  value={companyName}
-                  onChange={(e) => setCompanyName(e.target.value)}
-                  placeholder="Company Name"
-                  className="w-full h-10 bg-black border border-[#1A1A1A] text-white text-sm px-3 rounded-md focus:border-[#22c55e] focus:outline-none transition-colors placeholder-[#737373]"
-                />
-              </div>
-              <div className="flex flex-col">
-                <label
-                  htmlFor="job-title"
-                  className="text-[#737373] text-[11px] font-semibold uppercase tracking-wider mb-2"
-                >
-                  Job Title / Role
-                </label>
-                <input
-                  id="job-title"
-                  type="text"
-                  value={jobTitle}
-                  onChange={(e) => setJobTitle(e.target.value)}
-                  placeholder="Job Title / Role"
-                  className="w-full h-10 bg-black border border-[#1A1A1A] text-white text-sm px-3 rounded-md focus:border-[#22c55e] focus:outline-none transition-colors placeholder-[#737373]"
-                />
+              <Field
+                label="Role"
+                optional
+                value={role}
+                onChange={(e) => setRole(e.target.value)}
+                placeholder="e.g. Product Designer"
+                hint="Needed for the repeat-posting search."
+                maxLength={200}
+              />
+              <div className="mt-auto flex flex-col gap-3">
+                {error && <Alert>{error}</Alert>}
+                <Button type="submit" size="lg" icon="travel_explore" loading={running} disabled={!can && !running} className="w-full">
+                  {running ? 'Checking sources' : 'Run report'}
+                </Button>
+                <p className="text-xs text-muted">Uses 1 of your free reports. Takes about 30 seconds.</p>
               </div>
             </div>
-          </div>
-
-          {/* Run button + telemetry status */}
-          <div className="mt-6 flex flex-col gap-3">
-            <button
-              type="button"
-              onClick={handleRunReport}
-              disabled={running}
-              className="w-full py-3 bg-[#22c55e] hover:bg-[#16A34A] disabled:opacity-60 disabled:cursor-not-allowed text-black font-semibold rounded-lg transition-colors flex items-center justify-center gap-2"
-            >
-              <span
-                className={`material-symbols-outlined text-[18px] ${
-                  running ? 'animate-spin' : ''
-                }`}
-              >
-                {running ? 'sync' : 'bolt'}
-              </span>
-              <span>{running ? 'Gathering telemetry...' : 'Run Report'}</span>
-            </button>
-
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[#737373] text-xs pt-2 border-t border-[#1A1A1A]/40">
-              <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                <span className="text-[#22c55e] shrink-0">⚡</span>
-                <span className="truncate">{telemetryLine}</span>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#22c55e]" />
-                <span>{refreshedAt}</span>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* ── Results grid ─────────────────────────────── */}
-        <div
-          className="flex flex-col gap-4 transition-opacity duration-300"
-          style={{ opacity: running ? 0.45 : 1 }}
-        >
-          {/* Row 1: Extracted JD + Company Overview */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-            {/* Extracted JD */}
-            <div className="lg:col-span-7 bg-[#0D0D0D] border border-[#1A1A1A] rounded-xl p-6 flex flex-col justify-between">
-              <div>
-                <div className="flex items-center justify-between pb-3 border-b border-[#1A1A1A] gap-3">
-                  <h3 className="text-white text-[15px] font-semibold tracking-tight flex items-center gap-2">
-                    <span className="material-symbols-outlined text-[#737373] text-[18px]">
-                      description
-                    </span>
-                    Extracted from JD
-                  </h3>
-                  <span className="font-mono text-[11px] text-[#737373] uppercase whitespace-nowrap">
-                    Parser: High Confidence
-                  </span>
-                </div>
-
-                {/* Fields */}
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-y-4 gap-x-6 py-4 border-b border-[#1A1A1A]">
-                  <Field label="Role" value={view.extracted.role || '—'} />
-                  <Field label="Seniority" value={view.extracted.seniority || '—'} />
-                  <Field
-                    label="Experience Required"
-                    value={
-                      view.extracted.experience_years
-                        ? `${view.extracted.experience_years}+ years`
-                        : '—'
-                    }
-                  />
-                  <Field label="Location" value={view.extracted.location || '—'} />
-                  <Field
-                    label="Employment Type"
-                    value={view.extracted.employment_type || '—'}
-                  />
-                  <Field
-                    label="Salary"
-                    value={view.extracted.salary_text || 'Not mentioned'}
-                  />
-                </div>
-
-                {/* Skills */}
-                <div className="pt-3">
-                  <span className="text-[#737373] text-[11px] font-semibold uppercase tracking-wider block mb-2">
-                    Required Skills
-                  </span>
-                  <div className="flex flex-wrap gap-1.5 mb-3">
-                    {view.extracted.required_skills.map((s) => (
-                      <span
-                        key={s}
-                        className="bg-[#22c55e]/10 border border-[#22c55e]/30 text-[#22c55e] text-xs font-semibold rounded px-2.5 py-1"
-                      >
-                        {s}
-                      </span>
-                    ))}
-                  </div>
-
-                  <span className="text-[#737373] text-[11px] font-semibold uppercase tracking-wider block mb-2">
-                    Nice to Have
-                  </span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {view.extracted.nice_to_have_skills.map((s) => (
-                      <span
-                        key={s}
-                        className="bg-[#1A1A1A] border border-[#1A1A1A] text-[#737373] text-xs font-semibold rounded px-2.5 py-1"
-                      >
-                        {s}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Company Overview */}
-            <div className="lg:col-span-5 bg-[#0D0D0D] border border-[#1A1A1A] rounded-xl p-6 flex flex-col justify-between">
-              <div>
-                <div className="flex items-center justify-between pb-3 border-b border-[#1A1A1A] gap-3">
-                  <h3 className="text-white text-[15px] font-semibold tracking-tight flex items-center gap-2">
-                    <span className="material-symbols-outlined text-[#737373] text-[18px]">
-                      corporate_fare
-                    </span>
-                    Company Overview
-                  </h3>
-                  <a
-                    href={view.company.source_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-[#22c55e] text-xs font-medium hover:underline flex items-center gap-1 whitespace-nowrap"
-                  >
-                    source: Crunchbase.com ↗
-                  </a>
-                </div>
-
-                <div className="grid grid-cols-2 gap-y-4 gap-x-4 py-4">
-                  <Field label="Founded" value={view.company.founded} small />
-                  <Field
-                    label="Funding Stage"
-                    value={view.company.funding_stage}
-                    small
-                    accent
-                  />
-                  <Field label="Total Raised" value={view.company.total_raised} small />
-                  <Field label="Last Round" value={view.company.last_round} small />
-                  <Field label="Employees" value={view.company.employees} small />
-                  <Field label="Investors" value={view.company.investors} small />
-                </div>
-              </div>
-
-              <div className="bg-[#141414] border border-[#1A1A1A] p-3 rounded-lg flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2">
-                  <span className="material-symbols-outlined text-[#22c55e] text-[16px]">
-                    verified
-                  </span>
-                  <span className="text-white">Cap Table Solidity</span>
-                </div>
-                <span className="text-[#22c55e] font-mono">Tier 1 Backed</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Row 2: Tech Stack + Ghost Posting */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-            {/* Tech Stack */}
-            <div className="lg:col-span-7 bg-[#0D0D0D] border border-[#1A1A1A] rounded-xl p-6">
-              <div className="flex items-center justify-between pb-3 border-b border-[#1A1A1A] gap-3">
-                <h3 className="text-white text-[15px] font-semibold tracking-tight flex items-center gap-2">
-                  <span className="material-symbols-outlined text-[#737373] text-[18px]">
-                    code
-                  </span>
-                  Tech Stack Reality Check
-                </h3>
-                <a
-                  href={view.github.source_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-[#22c55e] text-xs font-medium hover:underline flex items-center gap-1 whitespace-nowrap"
-                >
-                  source: GitHub.com ↗
-                </a>
-              </div>
-
-              <div className="grid grid-cols-2 text-[#737373] text-[11px] uppercase font-mono py-2.5 border-b border-[#1A1A1A]/60">
-                <span>In the JD</span>
-                <span className="text-right">In Public Codebase</span>
-              </div>
-
-              <div className="divide-y divide-[#1A1A1A]">
-                {view.github.jd_tech.map((tech) => {
-                  const confirmed = tech.status === 'confirmed'
-                  const inCode = tech.status === 'in_code'
-                  const missing = tech.status === 'missing'
-                  return (
-                    <div
-                      key={tech.name}
-                      className="py-2.5 flex items-center justify-between gap-3"
-                    >
-                      <span className="text-white text-sm font-medium flex items-center gap-2">
-                        <span
-                          className={`w-2 h-2 rounded-full ${
-                            missing ? 'bg-[#737373]' : 'bg-[#22c55e]'
-                          }`}
-                        />
-                        {tech.name}
-                      </span>
-                      <div className="text-right">
-                        {missing ? (
-                          <span className="text-[#737373] font-semibold text-[13px]">
-                            Not found in public repos —
-                          </span>
-                        ) : (
-                          <>
-                            <span className="text-[#22c55e] font-semibold text-[13px]">
-                              {inCode ? 'In code, not in JD ✓' : 'Confirmed ✓'}
-                            </span>
-                            <span className="text-[#737373] text-xs ml-1 hidden sm:inline">
-                              {confirmed && '(verified in repos)'}
-                            </span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4 pt-3 border-t border-[#1A1A1A] text-sm">
-                <div className="flex items-center gap-2">
-                  <span className="text-[#737373]">Last Public Commit:</span>
-                  <span className="text-white font-medium">
-                    {view.github.last_commit || '—'}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 sm:justify-end">
-                  <span className="text-[#737373]">Total Public Repositories:</span>
-                  <span className="text-white font-medium">
-                    {view.github.public_repos} public repos tracked
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Ghost Posting */}
-            <div className="lg:col-span-5 bg-[#0D0D0D] border border-[#1A1A1A] rounded-xl p-6 flex flex-col justify-between">
-              <div>
-                <div className="flex items-center justify-between pb-1 border-b border-[#1A1A1A] gap-3">
-                  <h3 className="text-white text-[15px] font-semibold tracking-tight flex items-center gap-2">
-                    <span className="material-symbols-outlined text-[#737373] text-[18px]">
-                      history
-                    </span>
-                    Posting History
-                  </h3>
-                  <a
-                    href={view.ghost.source_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-[#22c55e] text-xs font-medium hover:underline flex items-center gap-1 whitespace-nowrap"
-                  >
-                    source: Google Search ↗
-                  </a>
-                </div>
-                <p className="text-[#737373] text-[13px] mt-1 mb-3">
-                  Dates this role was found publicly
-                </p>
-
-                {/* Alert */}
-                {view.ghost.postings.length >= 3 && (
-                  <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-[#EAB308]/10 border border-[#EAB308]/30 mb-4 w-full">
-                    <span className="w-2 h-2 rounded-full bg-[#EAB308] shrink-0" />
-                    <span className="text-[#EAB308] text-xs font-medium">
-                      Posted multiple times — review carefully
-                    </span>
-                  </div>
-                )}
-
-                {/* Timeline */}
-                <div className="relative pl-6 space-y-4 before:content-[''] before:absolute before:left-2.5 before:top-2 before:bottom-2 before:w-px before:bg-[#1A1A1A]">
-                  {view.ghost.postings.map((p, i) => (
-                    <div
-                      key={i}
-                      className="relative flex items-start justify-between gap-3"
-                    >
-                      <div
-                        className={`absolute -left-6 top-1 w-2 h-2 rounded-full ${
-                          i === 0 ? 'bg-[#22c55e]' : 'bg-[#737373]'
-                        }`}
-                      />
-                      <div className="min-w-0">
-                        <span className="text-white text-[13px] font-medium block">
-                          {p.date}
-                        </span>
-                        <span className="text-[#737373] text-xs">
-                          {p.platform}
-                        </span>
-                      </div>
-                      <a
-                        href={p.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="shrink-0"
-                        aria-label="Open posting"
-                      >
-                        <span className="material-symbols-outlined text-[#22c55e] text-[16px]">
-                          open_in_new
-                        </span>
-                      </a>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Ghost probability */}
-              <div className="mt-5 p-3 rounded-lg bg-[#141414] border border-[#1A1A1A]">
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-[#737373] text-xs uppercase font-semibold">
-                    Ghost Probability Metric
-                  </span>
-                  <span className="text-[#EAB308] font-mono text-[13px]">
-                    {view.ghost.probability}% (Moderate Risk)
-                  </span>
-                </div>
-                <div className="w-full h-1.5 bg-black rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-[#EAB308] rounded-full"
-                    style={{ width: `${view.ghost.probability}%` }}
-                  />
-                </div>
-                <span className="text-[#737373] text-[11px] block mt-1.5">
-                  Pattern shows continuous evergreen re-listing rather than fresh headcount.
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Row 3: News + Reddit + Glassdoor */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-            {/* News */}
-            <div className="lg:col-span-4 bg-[#0D0D0D] border border-[#1A1A1A] rounded-xl p-6 flex flex-col justify-between">
-              <div>
-                <div className="flex items-center justify-between pb-1 border-b border-[#1A1A1A] gap-3">
-                  <h3 className="text-white text-[15px] font-semibold tracking-tight flex items-center gap-2">
-                    <span className="material-symbols-outlined text-[#737373] text-[18px]">
-                      newspaper
-                    </span>
-                    Recent News
-                  </h3>
-                  <a
-                    href={view.news.source_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-[#22c55e] text-xs font-medium hover:underline flex items-center gap-1 whitespace-nowrap"
-                  >
-                    source: NewsAPI ↗
-                  </a>
-                </div>
-                <span className="text-[#737373] text-xs block mb-3 mt-1">
-                  Last 90 days
-                </span>
-
-                <div className="divide-y divide-[#1A1A1A]">
-                  {view.news.articles.length === 0 ? (
-                    <p className="py-4 text-sm text-[#737373]">
-                      No recent news found.
-                    </p>
-                  ) : (
-                    view.news.articles.map((a, i) => (
-                      <a
-                        key={i}
-                        href={a.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="py-3 flex items-start justify-between gap-2 group cursor-pointer"
-                      >
-                        <div className="min-w-0">
-                          <h4 className="text-white text-sm font-medium leading-snug group-hover:text-[#22c55e] transition-colors">
-                            {a.title}
-                          </h4>
-                          <span className="text-[#737373] text-xs block mt-1">
-                            {a.source} • {a.published_at}
-                          </span>
-                        </div>
-                        <span className="material-symbols-outlined text-[#22c55e] text-[16px] shrink-0 mt-0.5">
-                          arrow_outward
-                        </span>
-                      </a>
-                    ))
-                  )}
-                </div>
-              </div>
-              <div className="pt-3 border-t border-[#1A1A1A] text-xs flex items-center justify-between">
-                <span className="text-[#737373]">News sentiment score</span>
-                <span className="text-[#22c55e] font-mono">
-                  +{view.news.sentiment.toFixed(2)} Bullish
-                </span>
-              </div>
-            </div>
-
-            {/* Reddit (demo — backend doesn't query Reddit yet) */}
-            <div className="lg:col-span-4 bg-[#0D0D0D] border border-[#1A1A1A] rounded-xl p-6 flex flex-col justify-between">
-              <div>
-                <div className="flex items-center justify-between pb-3 border-b border-[#1A1A1A] gap-3">
-                  <h3 className="text-white text-[15px] font-semibold tracking-tight flex items-center gap-2">
-                    <span className="material-symbols-outlined text-[#737373] text-[18px]">
-                      forum
-                    </span>
-                    Reddit Mentions
-                  </h3>
-                  <a
-                    href={view.reddit.source_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-[#22c55e] text-xs font-medium hover:underline flex items-center gap-1 whitespace-nowrap"
-                  >
-                    source: Reddit ↗
-                  </a>
-                </div>
-
-                <div className="pt-3">
-                  <div className="flex items-center gap-2">
-                    <span className="w-3 h-3 rounded-full bg-[#22c55e] inline-block shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
-                    <span className="text-[#22c55e] font-semibold text-base">
-                      {view.reddit.sentiment === 'mostly_positive'
-                        ? 'Mostly Positive'
-                        : view.reddit.sentiment === 'mixed'
-                        ? 'Mixed'
-                        : 'Mostly Negative'}
-                    </span>
-                  </div>
-                  <p className="text-[#737373] text-xs mt-0.5">
-                    Based on {view.reddit.total} public mentions across engineering subreddits
-                  </p>
-                </div>
-
-                <div className="divide-y divide-[#1A1A1A] mt-4">
-                  {view.reddit.subreddits.map((s) => (
-                    <a
-                      key={s.name}
-                      href={s.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="block py-2.5 hover:bg-[#141414] px-1.5 -mx-1.5 rounded transition-colors"
-                    >
-                      <div className="flex items-center justify-between text-[13px] gap-3">
-                        <span className="text-white font-medium truncate">
-                          {s.name}
-                        </span>
-                        <span
-                          className={`font-mono text-xs shrink-0 ${
-                            s.mentions === 0
-                              ? 'text-[#737373]'
-                              : s.pos_pct >= 60
-                              ? 'text-[#22c55e]'
-                              : 'text-[#EAB308]'
-                          }`}
-                        >
-                          {s.mentions === 0
-                            ? '0 mentions'
-                            : `${s.mentions} (${s.pos_pct}% pos)`}
-                        </span>
-                      </div>
-                    </a>
-                  ))}
-                </div>
-              </div>
-              <div className="pt-3 border-t border-[#1A1A1A] text-xs text-[#737373]">
-                <span>Filter: r/ExperiencedDevs weighted 2.5x</span>
-              </div>
-            </div>
-
-            {/* Glassdoor */}
-            <div className="lg:col-span-4 bg-[#0D0D0D] border border-[#1A1A1A] rounded-xl p-6 flex flex-col justify-between">
-              <div>
-                <div className="flex items-center justify-between pb-3 border-b border-[#1A1A1A] gap-3">
-                  <h3 className="text-white text-[15px] font-semibold tracking-tight flex items-center gap-2">
-                    <span className="material-symbols-outlined text-[#737373] text-[18px]">
-                      reviews
-                    </span>
-                    Glassdoor
-                  </h3>
-                  <a
-                    href={view.glassdoor.source_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-[#22c55e] text-xs font-medium hover:underline flex items-center gap-1 whitespace-nowrap"
-                  >
-                    source: Glassdoor ↗
-                  </a>
-                </div>
-
-                {view.glassdoor.overall_rating ? (
-                  <div className="space-y-3 py-4">
-                    <div className="flex items-center justify-between p-2.5 rounded bg-[#141414] border border-[#1A1A1A]">
-                      <span className="text-[#737373] text-[13px]">
-                        Overall Rating
-                      </span>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-white font-semibold text-sm">
-                          {view.glassdoor.overall_rating} / 5.0
-                        </span>
-                        <div className="flex text-[#22c55e]">
-                          {[1, 2, 3, 4, 5].map((i) => (
-                            <span
-                              key={i}
-                              className="material-symbols-outlined text-[16px]"
-                              style={{
-                                fontVariationSettings:
-                                  i <= Math.round(view.glassdoor.overall_rating || 0)
-                                    ? "'FILL' 1"
-                                    : "'FILL' 0",
-                                color:
-                                  i <= Math.round(view.glassdoor.overall_rating || 0)
-                                    ? '#22c55e'
-                                    : '#737373',
-                              }}
-                            >
-                              star
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between p-2.5 rounded bg-[#141414] border border-[#1A1A1A]">
-                      <span className="text-[#737373] text-[13px]">
-                        Interview Difficulty
-                      </span>
-                      <span className="text-[#EAB308] font-semibold text-sm px-2 py-0.5 bg-[#EAB308]/10 rounded border border-[#EAB308]/30">
-                        {view.glassdoor.interview_difficulty || '—'}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between p-2.5 rounded bg-[#141414] border border-[#1A1A1A]">
-                      <span className="text-[#737373] text-[13px]">
-                        Offer Rate
-                      </span>
-                      <div className="text-right">
-                        <span className="text-white font-semibold text-sm">
-                          {view.glassdoor.offer_rate}%
-                        </span>
-                        <span className="text-[#737373] text-[11px] block">
-                          (Selectively competitive)
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between p-2.5 rounded bg-[#141414] border border-[#1A1A1A]">
-                      <span className="text-[#737373] text-[13px]">
-                        Recommend to Friend
-                      </span>
-                      <span className="text-[#22c55e] font-semibold text-sm">
-                        {view.glassdoor.recommend_percent}%
-                      </span>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="py-8 text-center">
-                    <span className="material-symbols-outlined text-[#737373] text-3xl block mb-2">
-                      pending
-                    </span>
-                    <p className="text-sm text-[#737373]">
-                      Glassdoor data coming soon
-                    </p>
-                    <p className="text-xs text-[#737373] mt-1">
-                      We have applied for official API access
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              <div className="pt-3 border-t border-[#1A1A1A]">
-                <a
-                  href={view.glassdoor.source_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-[#22c55e] text-sm font-medium hover:underline flex items-center justify-between"
-                >
-                  <span>View all reviews on Glassdoor</span>
-                  <span>↗</span>
-                </a>
-              </div>
-            </div>
-          </div>
-
-          {/* Disclaimer */}
-          <div className="w-full bg-[#1A1A1A] rounded-lg p-4 mt-2">
-            <p className="text-[#737373] text-xs leading-relaxed">
-              All data displayed is sourced from public third-party platforms.
-              SafeApply.AI does not verify, generate, or take responsibility for this
-              information. Sources are linked directly. This is not career advice.
-            </p>
-          </div>
-
-          {/* Action row */}
-          <div className="flex flex-wrap items-center justify-end gap-3 mt-2">
-            <button
-              type="button"
-              onClick={handleShare}
-              className="border border-[#1A1A1A] bg-[#0D0D0D] text-white hover:bg-[#1A1A1A] px-4 py-2 rounded-lg text-xs font-medium transition-colors flex items-center gap-2"
-            >
-              <span
-                className={`material-symbols-outlined text-[16px] ${
-                  shareCopied ? 'text-[#22c55e]' : 'text-[#737373]'
-                }`}
-              >
-                {shareCopied ? 'check' : 'share'}
-              </span>
-              <span>{shareCopied ? 'Copied Link' : 'Share Report'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              className="border border-[#1A1A1A] bg-[#0D0D0D] text-white hover:bg-[#1A1A1A] px-4 py-2 rounded-lg text-xs font-medium transition-colors flex items-center gap-2"
-            >
-              <span className="material-symbols-outlined text-[16px] text-[#22c55e]">
-                {savedToBackend ? 'check_circle' : 'bookmark'}
-              </span>
-              <span>{savedToBackend ? 'Report Saved' : 'Save Report'}</span>
-            </button>
-          </div>
-        </div>
-      </div>
+          </Card>
+        </form>
+        {running && <RunningSources hasRole={Boolean(role.trim())} hasJd={Boolean(jd.trim())} />}
+      </PageContainer>
     </>
   )
 }
 
-// ─── Field helper ─────────────────────────────────────────
-function Field({
-  label,
-  value,
-  small,
-  accent,
-}: {
-  label: string
-  value: string
-  small?: boolean
-  accent?: boolean
-}) {
+function RunningSources({ hasRole, hasJd }: { hasRole: boolean; hasJd: boolean }) {
+  const reduce = useReducedMotion()
+  const rows = [
+    { icon: 'description', label: 'Reading the job post', on: hasJd },
+    { icon: 'newspaper', label: 'Searching recent news', on: true },
+    { icon: 'code', label: 'Looking up public code', on: true },
+    { icon: 'event_repeat', label: 'Finding repeat postings', on: hasRole },
+  ].filter((r) => r.on)
   return (
-    <div>
-      <span className="text-[#737373] text-[11px] uppercase font-semibold block">
-        {label}
-      </span>
-      <span
-        className={`${small ? 'text-sm' : 'text-sm'} font-medium leading-snug ${
-          accent ? 'text-[#22c55e] inline-flex items-center gap-1' : 'text-white'
-        }`}
-      >
-        {accent && (
-          <span className="w-1.5 h-1.5 rounded-full bg-[#22c55e]" />
-        )}
-        {value}
-      </span>
+    <Card aria-live="polite">
+      <ul className="grid sm:grid-cols-2 gap-3">
+        {rows.map((r, i) => (
+          <motion.li
+            key={r.label}
+            className="flex items-center gap-3 text-sm"
+            initial={reduce ? false : { opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.08 }}
+          >
+            <Icon name="progress_activity" className="text-[18px] text-accent animate-spin" />
+            <span className="text-muted">{r.label}</span>
+          </motion.li>
+        ))}
+      </ul>
+    </Card>
+  )
+}
+
+function ReportSkeleton() {
+  return (
+    <PageContainer>
+      <div className="flex flex-col gap-3">
+        <Skeleton className="h-8 w-64" />
+        <Skeleton className="h-4 w-40" />
+      </div>
+      <div className="grid lg:grid-cols-2 gap-4">
+        {[0, 1, 2, 3].map((i) => (
+          <Card key={i} className="flex flex-col gap-3">
+            <Skeleton className="h-4 w-1/3" />
+            <Skeleton className="h-20 w-full" />
+          </Card>
+        ))}
+      </div>
+    </PageContainer>
+  )
+}
+
+// ─── Report view ─────────────────────────────────────────
+/** `shared` renders the read-only public view at /share/search/:id. */
+export function ReportView({ report, onNew, shared = false }: { report: Report & { share_id?: string | null }; onNew?: () => void; shared?: boolean }) {
+  const [shareId, setShareId] = useState<string | null>(report.share_id ?? null)
+  const [sharing, setSharing] = useState(false)
+  const v = useMemo(() => {
+    const d = report.report_data || {}
+    const jd = d.extracted_jd || EMPTY_JD
+    const gh = d.github || EMPTY_GH
+    return {
+      jd,
+      gh,
+      hasJd: Boolean(d.extracted_jd && (jd.role || jd.required_skills.length)),
+      tech: techCheck(jd.required_skills || [], gh.languages || []),
+      postings: d.ghost_posting?.postings || [],
+      postingsSource: d.ghost_posting?.source_url || '',
+      news: d.news?.articles || [],
+      newsSource: d.news?.source_url || '',
+    }
+  }, [report])
+
+  const publicUrl = (id: string) => `${window.location.origin}/share/search/${id}`
+
+  async function share() {
+    if (!report.id) return
+    setSharing(true)
+    try {
+      const id = shareId || (await shareReport(report.id)).data.share_id
+      setShareId(id)
+      const copied = await navigator.clipboard.writeText(publicUrl(id)).then(() => true, () => false)
+      toast.success(copied ? 'Public link copied. Anyone with it can view this report.' : `Public link: ${publicUrl(id)}`)
+    } catch (e) {
+      toast.error(apiError(e, 'Couldn’t create a public link.'))
+    } finally {
+      setSharing(false)
+    }
+  }
+
+  async function unshare() {
+    if (!report.id) return
+    setSharing(true)
+    try {
+      await unshareReport(report.id)
+      setShareId(null)
+      toast.success('Public link turned off')
+    } catch (e) {
+      toast.error(apiError(e, 'Couldn’t turn off the link.'))
+    } finally {
+      setSharing(false)
+    }
+  }
+
+  return (
+    <>
+      <SEO
+        title={`${report.company_name} report | SafeApply.AI`}
+        description={`What public sources say about ${report.company_name}: the job post, code activity, reposts and news.`}
+        path={shared ? '/share/search' : '/dashboard/company-report'}
+        noindex
+      />
+      <PageContainer>
+        <PageHeader
+          back={shared ? undefined : { to: '/dashboard/company-report/history', label: 'All reports' }}
+          title={report.company_name}
+          description={
+            <>
+              {report.job_title ? `${report.job_title} · ` : ''}Generated {formatDate(report.created_at)}
+              {shared ? ' · shared by a SafeApply user' : ''}
+            </>
+          }
+          actions={
+            shared ? (
+              <ButtonLink to="/signup" icon="search">
+                Check a company yourself
+              </ButtonLink>
+            ) : (
+              <>
+                {shareId ? (
+                  <>
+                    <Button variant="secondary" icon="link" onClick={share} loading={sharing}>
+                      Copy public link
+                    </Button>
+                    <Button variant="ghost" icon="link_off" onClick={unshare} disabled={sharing}>
+                      Stop sharing
+                    </Button>
+                  </>
+                ) : (
+                  <Button variant="secondary" icon="ios_share" onClick={share} loading={sharing} disabled={!report.id}>
+                    Share
+                  </Button>
+                )}
+                {onNew && (
+                  <Button icon="add" onClick={onNew}>
+                    New report
+                  </Button>
+                )}
+              </>
+            )
+          }
+        />
+
+        <div className="grid lg:grid-cols-2 gap-4">
+          {/* The job */}
+          <Reveal>
+            <Card className="h-full">
+              <CardHeader title="The job" description="Pulled from the posting text" />
+              {!v.hasJd ? (
+                <p className="text-sm text-muted">No job post was included. Paste one next time to see role, level, pay and skills here.</p>
+              ) : (
+                <div className="flex flex-col gap-5">
+                  <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-4">
+                    <KV k="Role" v={v.jd.role} />
+                    <KV k="Level" v={v.jd.seniority} capital />
+                    <KV k="Experience" v={v.jd.experience_years ? `${v.jd.experience_years}+ years` : null} />
+                    <KV k="Location" v={[v.jd.location, v.jd.remote ? 'Remote' : null].filter(Boolean).join(' · ') || null} />
+                    <KV k="Type" v={v.jd.employment_type} capital />
+                    <KV k="Pay" v={v.jd.salary_text} fallback="Not listed" />
+                  </dl>
+                  {v.jd.required_skills.length > 0 && (
+                    <div>
+                      <p className="text-xs text-muted mb-2">Required</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {v.jd.required_skills.map((s) => (
+                          <Badge key={s} tone="accent">
+                            {s}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {v.jd.nice_to_have_skills.length > 0 && (
+                    <div>
+                      <p className="text-xs text-muted mb-2">Nice to have</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {v.jd.nice_to_have_skills.map((s) => (
+                          <Badge key={s}>{s}</Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <ButtonLink to="/dashboard/cv-match" variant="secondary" size="sm" icon="compare_arrows" className="self-start">
+                    Match my CV to this
+                  </ButtonLink>
+                </div>
+              )}
+            </Card>
+          </Reveal>
+
+          {/* Code */}
+          <Reveal delay={0.04}>
+            <Card className="h-full">
+              <CardHeader
+                title="Engineering activity"
+                description="From the company’s public code"
+                action={v.gh.source_url ? <SourceLink href={v.gh.source_url} label="GitHub" /> : undefined}
+              />
+              {!v.gh.org_found ? (
+                <p className="text-sm text-muted">No public GitHub organisation matched this name. Many companies keep their code private, so this alone isn’t a warning sign.</p>
+              ) : (
+                <div className="flex flex-col gap-5">
+                  <dl className="grid grid-cols-2 gap-4">
+                    <KV k="Public repositories" v={String(v.gh.public_repos)} />
+                    <KV k="Last commit" v={v.gh.last_commit} />
+                  </dl>
+                  {v.tech.length > 0 ? (
+                    <div>
+                      <p className="text-xs text-muted mb-2">Listed in the ad vs. seen in code</p>
+                      <ul className="flex flex-col divide-y divide-line max-h-72 overflow-y-auto pr-1">
+                        {v.tech.map((t) => (
+                          <li key={`${t.name}-${t.status}`} className="flex items-center justify-between gap-3 py-2 text-sm">
+                            <span className="truncate">{t.name}</span>
+                            <span className={cn('text-xs shrink-0', t.status === 'both' ? 'text-accent' : 'text-muted')}>
+                              {t.status === 'both' ? 'In ad and code' : t.status === 'code_only' ? 'Code only' : 'Ad only'}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                      <p className="mt-3 text-xs text-muted leading-relaxed">
+                        “Ad only” often just means the tool isn’t in a public repo. Worth a question in the interview.
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted">No languages reported.</p>
+                  )}
+                </div>
+              )}
+            </Card>
+          </Reveal>
+
+          {/* Postings */}
+          <Reveal delay={0.08}>
+            <Card className="h-full">
+              <CardHeader
+                title="Repeat postings"
+                description="Where this role shows up in job search results"
+                action={v.postingsSource ? <SourceLink href={v.postingsSource} label="Search" /> : undefined}
+              />
+              {!report.job_title ? (
+                <p className="text-sm text-muted">Add the role when you run a report to search for repeat postings.</p>
+              ) : v.postings.length === 0 ? (
+                <p className="text-sm text-muted">No other listings found for this role right now.</p>
+              ) : (
+                <div className="flex flex-col gap-4">
+                  {v.postings.length >= REPOST_ATTENTION && (
+                    <Alert tone="warn" title={`Listed ${v.postings.length} times`}>
+                      Reposting can mean high turnover, a slow process, or an opening kept up after it’s filled. Ask the recruiter how long it’s been open.
+                    </Alert>
+                  )}
+                  <ol className="flex flex-col">
+                    {v.postings.map((p, i) => (
+                      <li key={`${p.url}-${i}`} className="relative flex items-center gap-3 py-2.5 pl-5">
+                        <span aria-hidden className="absolute left-[3px] top-0 bottom-0 w-px bg-line" />
+                        <span aria-hidden className={cn('absolute left-0 w-[7px] h-[7px] rounded-full', i === 0 ? 'bg-accent' : 'bg-muted')} />
+                        <span className="text-sm min-w-0 flex-1">
+                          <span className="font-medium">{p.date}</span>
+                          <span className="text-muted"> · {p.platform}</span>
+                        </span>
+                        <a href={safeUrl(p.url)} target="_blank" rel="noopener noreferrer nofollow" className="text-muted hover:text-accent transition-colors" aria-label={`Open listing on ${p.platform}`}>
+                          <Icon name="open_in_new" className="text-[18px]" />
+                        </a>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+            </Card>
+          </Reveal>
+
+          {/* News */}
+          <Reveal delay={0.12}>
+            <Card className="h-full">
+              <CardHeader title="Recent news" description="Last 30 days" action={v.newsSource ? <SourceLink href={v.newsSource} label="NewsAPI" /> : undefined} />
+              {v.news.length === 0 ? (
+                <p className="text-sm text-muted">No coverage in the last 30 days. Normal for smaller companies.</p>
+              ) : (
+                <ul className="flex flex-col divide-y divide-line -my-2">
+                  {v.news.map((a, i) => (
+                    <li key={`${a.url}-${i}`}>
+                      <a href={safeUrl(a.url)} target="_blank" rel="noopener noreferrer nofollow" className="group flex items-start justify-between gap-3 py-3">
+                        <span className="min-w-0">
+                          <span className="block text-sm font-medium leading-snug group-hover:text-accent transition-colors">{a.title}</span>
+                          <span className="block text-xs text-muted mt-1">
+                            {a.source} · {a.published_at}
+                          </span>
+                        </span>
+                        <Icon name="arrow_outward" className="text-[18px] text-muted group-hover:text-accent transition-colors shrink-0" />
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Card>
+          </Reveal>
+        </div>
+
+        <p className="text-xs text-muted leading-relaxed max-w-[80ch]">
+          Everything above comes from third-party public sources and is linked so you can check it. SafeApply doesn’t verify it, and none of it is career advice.{' '}
+          <Link to="/terms" className="underline underline-offset-2 hover:text-fg">
+            Terms
+          </Link>
+        </p>
+      </PageContainer>
+    </>
+  )
+}
+
+function KV({ k, v, fallback = '-', capital }: { k: string; v: string | null | undefined; fallback?: string; capital?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-xs text-muted">{k}</dt>
+      <dd className={cn('text-sm mt-1 break-words', !v && 'text-muted', capital && v && 'capitalize')}>{v || fallback}</dd>
     </div>
+  )
+}
+
+// Links in a report come from third-party APIs. Only http(s) URLs become
+// links; anything else (javascript:, data:) is dropped.
+function safeUrl(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined
+  try {
+    const u = new URL(raw)
+    return u.protocol === 'https:' || u.protocol === 'http:' ? u.href : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function SourceLink({ href, label }: { href: string; label: string }) {
+  return (
+    <a href={safeUrl(href)} target="_blank" rel="noopener noreferrer nofollow" className="inline-flex items-center gap-1 text-xs text-muted hover:text-accent transition-colors">
+      {label}
+      <Icon name="arrow_outward" className="text-[14px]" />
+    </a>
   )
 }

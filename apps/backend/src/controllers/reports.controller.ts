@@ -1,21 +1,7 @@
 // ============================================================
 // FILE: apps/backend/src/controllers/reports.controller.ts
-// PURPOSE: Company intelligence report generation, history, and the
-//          anonymous landing-page demo JD extractor.
-//
-// PERMANENT RATE LIMIT POLICY
-// ─────────────────────────────
-// Production (NODE_ENV=production):
-//   • 1 free demo extraction per IP per 24h (Upstash Redis)
-//   • Input capped at 8,000 chars (≈2,000 tokens)
-//   • Output declared at 800 tokens
-//   • Total cost per visitor: ~2,800 tokens — well under Groq's
-//     8,000 TPM free-tier ceiling
-//
-// Development (NODE_ENV=development):
-//   • Rate limit BYPASSED so the demo can be tested freely
-//   • Input/output caps still enforced (catches bugs)
-//   • Nothing written to Redis — no stale keys to clean up
+// PURPOSE: Company report generation, history, and demo JD extract.
+// Enforces 10 free reports per user (until paid plans ship).
 // ============================================================
 
 import { Request, Response } from 'express'
@@ -23,40 +9,56 @@ import { supabaseAdmin } from '../config/supabase'
 import { processReport } from '../queues/reportQueue'
 import { getCached, setCached, CACHE_TTL } from '../services/cache.service'
 import { extractJDData } from '../services/groq.service'
+import { checkFreeLimit, sendLimitError } from '../utils/usage'
 import { sanitizeObject } from '../utils/sanitize'
 import { sendSuccess, sendError, sendPaginated } from '../utils/response'
+import { hashedIp, sha256 } from '../utils/net'
+import { pageParam } from '../utils/sanitize'
 
-// ─── Tunables ─────────────────────────────────────────────
-// Chars allowed in the anonymous demo. ~4 chars per token, so 8000
-// chars ≈ 2000 input tokens. Plus 800 declared output tokens = 2800
-// total, safely under Groq's 8000 TPM free-tier ceiling.
 const DEMO_MAX_CHARS = 8000
 const DEMO_MIN_CHARS = 50
 const DEMO_OUTPUT_TOKENS = 800
-const DEMO_RATE_LIMIT_SECONDS = 86400 // 24h
-
-// Only production enforces the per-IP rate limit.
+const DEMO_RATE_LIMIT_SECONDS = 30 * 86400 // one guest check per IP per 30 days
 const IS_PRODUCTION = process.env.NODE_ENV === 'production'
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-// ─── ANALYZE (authenticated, full report) ─────────────────
+// Express 5 types route params as string | string[]; reports only use single ids.
+function paramId(raw: unknown): string | null {
+  return typeof raw === 'string' && UUID_RE.test(raw) ? raw : null
+}
+
+// ─── ANALYZE (authenticated full report) ─────────────────
 export async function analyzeCompany(req: Request, res: Response): Promise<void> {
   try {
-    const { jd_text, company_name, job_title } = sanitizeObject(req.body)
+    const limit = await checkFreeLimit(req.user!.userId, 'reports')
+    if (!limit.allowed) return sendLimitError(res, limit, 'reports')
 
-    const resolvedCompany = company_name || 'Unknown Company'
-    const cacheKey = `${resolvedCompany}-${job_title || 'general'}`
+    const body = sanitizeObject(req.body)
+    const jd_text = body.jd_text as string | undefined
+    const company_name = body.company_name as string | undefined
+    const job_title = body.job_title as string | undefined
 
-    const cached = await getCached('report', cacheKey)
+    const resolvedCompany = (company_name || 'Unknown Company').trim()
+    // The cached report includes the decoded job post. Keying only on
+    // company + title would serve one user's job post to another, so the
+    // key includes a hash of the exact JD text.
+    const cacheKey = sha256(`${resolvedCompany.toLowerCase()}|${(job_title || '').toLowerCase()}|${(jd_text || '').trim()}`)
+
+    const cached = await getCached<Record<string, unknown>>('report', cacheKey)
+    let reportData: Record<string, unknown>
+    let savedReportId: string | null = null
+    let savedCreatedAt: string | null = null
+
     if (cached) {
-      sendSuccess(res, cached)
-      return
+      reportData = cached
+    } else {
+      reportData = (await processReport({
+        companyName: resolvedCompany,
+        jobTitle: job_title,
+        jdText: jd_text,
+      })) as unknown as Record<string, unknown>
+      await setCached('report', cacheKey, reportData, CACHE_TTL.REPORT)
     }
-
-    const reportData = await processReport({
-      companyName: resolvedCompany,
-      jobTitle: job_title,
-      jdText: jd_text,
-    })
 
     const { data: savedReport, error } = await supabaseAdmin
       .from('reports')
@@ -67,21 +69,22 @@ export async function analyzeCompany(req: Request, res: Response): Promise<void>
         jd_text: jd_text || null,
         report_data: reportData,
       })
-      .select()
+      .select('id, created_at')
       .single()
 
     if (error) {
       console.error('Save report error:', error)
+    } else if (savedReport) {
+      savedReportId = savedReport.id
+      savedCreatedAt = savedReport.created_at
     }
 
-    await setCached('report', cacheKey, reportData, CACHE_TTL.REPORT)
-
     sendSuccess(res, {
-      id: savedReport?.id || null,
+      id: savedReportId,
       company_name: resolvedCompany,
       job_title: job_title || null,
       report_data: reportData,
-      created_at: savedReport?.created_at || new Date().toISOString(),
+      created_at: savedCreatedAt || new Date().toISOString(),
     })
   } catch (error) {
     console.error('Analyze company error:', error)
@@ -89,16 +92,12 @@ export async function analyzeCompany(req: Request, res: Response): Promise<void>
   }
 }
 
-// ─── DEMO JD EXTRACT (anonymous) ──────────────────────────
-// Landing page free try. No auth required.
-//
-// Rate limit is IP-based and enforced ONLY in production. Dev mode
-// skips the check entirely so testing doesn't lock you out for 24h.
+// ─── DEMO JD EXTRACT (anonymous, 1 per IP per 30 days) ──
 export async function demoExtractJD(req: Request, res: Response): Promise<void> {
   try {
-    const { jd_text } = sanitizeObject(req.body)
+    const body = sanitizeObject(req.body)
+    const jd_text = body.jd_text as string | undefined
 
-    // ── Input validation ─────────────────────────────────
     if (!jd_text || typeof jd_text !== 'string') {
       sendError(res, 'Job description is required', 400)
       return
@@ -111,7 +110,7 @@ export async function demoExtractJD(req: Request, res: Response): Promise<void> 
         res,
         `Job description is too short — paste at least ${DEMO_MIN_CHARS} characters.`,
         400,
-        'JD_TOO_SHORT'
+        'JD_TOO_SHORT',
       )
       return
     }
@@ -119,52 +118,38 @@ export async function demoExtractJD(req: Request, res: Response): Promise<void> 
     if (trimmed.length > DEMO_MAX_CHARS) {
       sendError(
         res,
-        `Job description is too long (${trimmed.length.toLocaleString()} characters). The free demo accepts up to ${DEMO_MAX_CHARS.toLocaleString()} — sign up to analyze full postings.`,
+        `Job description is too long (${trimmed.length.toLocaleString()} characters). The free demo accepts up to ${DEMO_MAX_CHARS.toLocaleString()}.`,
         400,
-        'JD_TOO_LONG'
+        'JD_TOO_LONG',
       )
       return
     }
 
-    // ── Rate limit (production only) ─────────────────────
-    const ip = (req.ip || req.socket.remoteAddress || 'unknown').replace(
-      /[:.]/g,
-      '_'
-    )
-    const rateLimitKey = `ip_${ip}`
+    // Raw IPs are never stored: the key is an HMAC of the IP.
+    const rateLimitKey = `ip_${hashedIp(req)}`
 
     if (IS_PRODUCTION) {
       const alreadyUsed = await getCached<boolean>('demo_jd', rateLimitKey)
-
       if (alreadyUsed) {
         sendError(
           res,
-          'You have used your free extraction. Sign up to continue with full reports.',
+          'You have used your free extraction. Sign up to continue.',
           429,
-          'DEMO_EXHAUSTED'
+          'DEMO_EXHAUSTED',
         )
         return
       }
     }
 
-    // ── Run the extraction ───────────────────────────────
     const extractedJD = await extractJDData(trimmed, {
       maxTokens: DEMO_OUTPUT_TOKENS,
     })
 
     if (!extractedJD) {
-      sendError(
-        res,
-        'Extraction failed. Please try again in a moment.',
-        500,
-        'EXTRACTION_FAILED'
-      )
+      sendError(res, 'Extraction failed. Please try again.', 500, 'EXTRACTION_FAILED')
       return
     }
 
-    // ── Mark used (production only) ──────────────────────
-    // Only set AFTER a successful extraction, so a transient Groq
-    // failure doesn't burn the visitor's free try.
     if (IS_PRODUCTION) {
       await setCached('demo_jd', rateLimitKey, true, DEMO_RATE_LIMIT_SECONDS)
     }
@@ -179,7 +164,7 @@ export async function demoExtractJD(req: Request, res: Response): Promise<void> 
 // ─── GET HISTORY ──────────────────────────────────────────
 export async function getReportHistory(req: Request, res: Response): Promise<void> {
   try {
-    const page = parseInt(req.query.page as string) || 1
+    const page = pageParam(req.query.page)
     const limit = 20
     const offset = (page - 1) * limit
 
@@ -205,7 +190,12 @@ export async function getReportHistory(req: Request, res: Response): Promise<voi
 // ─── GET SINGLE REPORT ────────────────────────────────────
 export async function getReport(req: Request, res: Response): Promise<void> {
   try {
-    const { id } = req.params
+    const id = paramId(req.params.id)
+
+    if (!id) {
+      sendError(res, 'Invalid report id', 400)
+      return
+    }
 
     const { data, error } = await supabaseAdmin
       .from('reports')
@@ -219,7 +209,14 @@ export async function getReport(req: Request, res: Response): Promise<void> {
       return
     }
 
-    sendSuccess(res, data)
+    sendSuccess(res, {
+      id: data.id,
+      company_name: data.company_name,
+      job_title: data.job_title,
+      report_data: data.report_data,
+      created_at: data.created_at,
+      share_id: data.share_id ?? null,
+    })
   } catch (error) {
     console.error('Get report error:', error)
     sendError(res, 'Server error', 500)
@@ -229,7 +226,12 @@ export async function getReport(req: Request, res: Response): Promise<void> {
 // ─── DELETE REPORT ────────────────────────────────────────
 export async function deleteReport(req: Request, res: Response): Promise<void> {
   try {
-    const { id } = req.params
+    const id = paramId(req.params.id)
+
+    if (!id) {
+      sendError(res, 'Invalid report id', 400)
+      return
+    }
 
     const { error } = await supabaseAdmin
       .from('reports')
