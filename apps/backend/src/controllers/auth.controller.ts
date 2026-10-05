@@ -24,7 +24,6 @@ import {
 } from '../utils/jwt'
 import { sanitizeObject } from '../utils/sanitize'
 import { sendSuccess, sendError } from '../utils/response'
-import { normalizeGithub, normalizePhone, normalizePortfolio } from '../utils/profileLinks'
 import { FREE_EMAIL_DOMAINS, emailDomain } from '../utils/recruiter'
 import { verifySupabasePassword } from '../utils/passwordCheck'
 
@@ -70,18 +69,7 @@ export async function signup(req: Request, res: Response): Promise<void> {
       sendError(res, 'Use your work email (for example you@yourcompany.com) to sign up as a recruiter.', 400)
       return
     }
-    // Joi already normalised these; re-check so this handler is safe on its own.
-    const normalizedPhone = normalizePhone(phone)
-    if (!normalizedPhone) {
-      sendError(res, 'Enter a valid phone number with country code', 400)
-      return
-    }
-    const githubUrl = body.github_url ? normalizeGithub(body.github_url) : null
-    const portfolioUrl = body.portfolio_url ? normalizePortfolio(body.portfolio_url) : null
-    if ((body.github_url && !githubUrl) || (body.portfolio_url && !portfolioUrl)) {
-      sendError(res, 'Check your GitHub and portfolio links', 400)
-      return
-    }
+    const normalizedPhone = phone && typeof phone === 'string' ? phone : null
 
     // Reject if email already taken
     const { data: existingUser } = await supabaseAdmin
@@ -127,8 +115,6 @@ export async function signup(req: Request, res: Response): Promise<void> {
           email: normalizedEmail,
           full_name: normalizedName,
           phone: normalizedPhone,
-          github_url: githubUrl,
-          portfolio_url: portfolioUrl,
           password_hash: passwordHash,
         },
         { onConflict: 'id' },
@@ -380,6 +366,12 @@ export async function logout(req: Request, res: Response): Promise<void> {
 // ─── FORGOT PASSWORD ──────────────────────────────────────
 export async function forgotPassword(req: Request, res: Response): Promise<void> {
   try {
+    // No email service yet: say so instead of pretending a link was sent.
+    if (!env.emailEnabled) {
+      sendError(res, 'Password reset isn’t available yet. Our email service is being set up.', 503, 'EMAIL_DISABLED')
+      return
+    }
+
     const { email } = req.body
 
     const { data: user } = await supabaseAdmin

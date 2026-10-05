@@ -71,6 +71,8 @@ export const env = {
   ipHashSecret: process.env.IP_HASH_SECRET || jwtRefreshSecret,
   trustProxy,
   // Email (Resend). Without a key, emails are skipped and logged.
+  // Master switch for all outgoing email. Off unless EMAIL_ENABLED=true.
+  emailEnabled: process.env.EMAIL_ENABLED === 'true',
   resendApiKey: process.env.RESEND_API_KEY || '',
   emailFrom: process.env.EMAIL_FROM || 'SafeApply <no-reply@safeapply.ai>',
   // Where local customers send money. Shown on the manual payment page.

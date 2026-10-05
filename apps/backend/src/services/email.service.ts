@@ -26,7 +26,8 @@ ${link ? `<a href="${esc(link)}" style="display:inline-block;margin-top:8px;back
 }
 
 export async function sendEmail(to: string, subject: string, html: string): Promise<boolean> {
-  if (!env.resendApiKey) {
+  // Email is switched off until a sending service is set up (EMAIL_ENABLED).
+  if (!env.emailEnabled || !env.resendApiKey) {
     if (env.isDev) console.info(`[email skipped] ${subject} -> ${to.replace(/(.).+@/, '$1***@')}`)
     return false
   }
