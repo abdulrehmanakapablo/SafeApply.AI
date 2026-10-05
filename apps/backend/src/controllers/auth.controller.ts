@@ -25,6 +25,7 @@ import {
 import { sanitizeObject } from '../utils/sanitize'
 import { sendSuccess, sendError } from '../utils/response'
 import { FREE_EMAIL_DOMAINS, emailDomain } from '../utils/recruiter'
+import { verifySupabasePassword } from '../utils/passwordCheck'
 
 // Refresh cookie: httpOnly (JS can't read it), Secure in production,
 // SameSite=Strict (never sent on cross-site requests → no CSRF), and only
@@ -166,7 +167,7 @@ export async function signup(req: Request, res: Response): Promise<void> {
 // ─── LOGIN ────────────────────────────────────────────────
 // Verify order:
 //   1. bcrypt against public.users.password_hash (fast path)
-//   2. If sentinel/mismatch/missing → Supabase Auth signInWithPassword
+//   2. If sentinel/mismatch/missing → verifySupabasePassword (throwaway client)
 //   3. On Supabase success → self-heal public.users.password_hash
 export async function login(req: Request, res: Response): Promise<void> {
   try {
@@ -209,14 +210,7 @@ export async function login(req: Request, res: Response): Promise<void> {
 
     // ── Step 2: fall back to Supabase Auth ──
     if (!passwordValid) {
-
-      const { data: signInData, error: signInError } =
-        await supabaseAdmin.auth.signInWithPassword({
-          email: normalizedEmail,
-          password,
-        })
-
-      if (signInError || !signInData.user) {
+      if (!(await verifySupabasePassword(normalizedEmail, password))) {
         sendError(res, 'Invalid email or password', 401)
         return
       }
@@ -510,13 +504,7 @@ export async function changePassword(req: Request, res: Response): Promise<void>
     const email = req.user!.email
 
     // Verify current password via Supabase Auth (authoritative source)
-    const { data: signInData, error: signInError } =
-      await supabaseAdmin.auth.signInWithPassword({
-        email,
-        password: current_password,
-      })
-
-    if (signInError || !signInData.user) {
+    if (!(await verifySupabasePassword(email, current_password))) {
       sendError(res, 'Current password is incorrect', 401)
       return
     }
@@ -594,6 +582,13 @@ export async function updateNotifications(
 export async function deleteAccount(req: Request, res: Response): Promise<void> {
   try {
     const userId = req.user!.userId
+
+    // 403, not 401: the frontend treats a 401 as an expired session and
+    // would refresh and replay the request.
+    if (!(await verifySupabasePassword(req.user!.email, req.body.password))) {
+      sendError(res, 'Password is incorrect', 403)
+      return
+    }
 
     const { error } = await supabaseAdmin.auth.admin.deleteUser(userId)
 

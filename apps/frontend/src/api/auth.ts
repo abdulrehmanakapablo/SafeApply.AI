@@ -82,7 +82,7 @@ export async function updateNotifications(payload: {
   return res.data as { success: boolean; data?: User['notification_prefs']; error?: string }
 }
 
-export async function deleteAccount(confirm: 'DELETE') {
-  const res = await api.delete('/auth/me', { data: { confirm } })
+export async function deleteAccount(confirm: 'DELETE', password: string) {
+  const res = await api.delete('/auth/me', { data: { confirm, password } })
   return res.data as { success: boolean; error?: string }
 }

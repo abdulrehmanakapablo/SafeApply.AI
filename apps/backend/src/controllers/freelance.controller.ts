@@ -433,7 +433,9 @@ export const hireProposal = h('hireProposal', async (req, res) => {
   const { data: contractId, error } = await supabaseAdmin.rpc('fl_hire', { p_proposal: id, p_client: me(req), p_milestones: milestones })
   if (error) return rpcFail(res, error)
 
-  const { data: c } = await supabaseAdmin.from('contracts').select('id, project_id, freelancer_id, title').eq('id', contractId).single()
+  const { data: c } = await supabaseAdmin.from('contracts').select('id, project_id, freelancer_id, title').eq('id', contractId).maybeSingle()
+  // The hire is already committed; a failed follow-up read must not turn it into an error.
+  if (!c) return sendSuccess(res, { contract_id: contractId as string }, 201, 'Freelancer hired')
   const { data: declined } = await supabaseAdmin.from('proposals').select('freelancer_id').eq('project_id', c.project_id).eq('status', 'declined').limit(500)
   await notify([
     { user_id: c.freelancer_id, type: 'contract', title: `You’re hired for “${c.title}”`, body: 'Your contract and milestones are ready.', link: `/freelancer/contracts/${c.id}` },

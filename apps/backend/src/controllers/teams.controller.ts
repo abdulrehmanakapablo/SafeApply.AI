@@ -387,7 +387,9 @@ export const searchTalent = h('talent.search', async (req, res) => {
 
 async function talentUserId(publicId: string, companyId: string): Promise<{ user_id: string; row: TalentRow } | null> {
   const { data } = await visibleTalent(companyId, `user_id, ${TALENT_FIELDS}`).eq('public_id', publicId).maybeSingle()
-  return data ? { user_id: data.user_id as string, row: data as unknown as TalentRow } : null
+  // Dynamic select strings can't be inferred by supabase-js, so the row is typed here.
+  const row = data as unknown as (TalentRow & { user_id: string }) | null
+  return row ? { user_id: row.user_id, row } : null
 }
 
 export const getTalent = h('talent.get', async (req, res) => {
