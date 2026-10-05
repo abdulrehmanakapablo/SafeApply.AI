@@ -583,6 +583,13 @@ export async function deleteAccount(req: Request, res: Response): Promise<void> 
   try {
     const userId = req.user!.userId
 
+    // 403, not 401: the frontend treats a 401 as an expired session and
+    // would refresh and replay the request.
+    if (!(await verifySupabasePassword(req.user!.email, req.body.password))) {
+      sendError(res, 'Password is incorrect', 403)
+      return
+    }
+
     const { error } = await supabaseAdmin.auth.admin.deleteUser(userId)
 
     if (error) {

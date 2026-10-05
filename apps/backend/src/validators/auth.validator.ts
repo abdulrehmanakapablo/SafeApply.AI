@@ -126,4 +126,10 @@ export const deleteAccountSchema = Joi.object({
     'any.only': 'Type DELETE exactly to confirm',
     'any.required': 'Confirmation is required',
   }),
+  // Re-authentication: a stolen access token alone must not be able to
+  // destroy the account.
+  password: Joi.string().max(128).required().messages({
+    'any.required': 'Enter your password to confirm',
+    'string.empty': 'Enter your password to confirm',
+  }),
 })

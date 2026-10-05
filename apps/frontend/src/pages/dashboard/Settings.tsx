@@ -60,6 +60,7 @@ export default function Settings() {
   // Delete
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [confirmText, setConfirmText] = useState('')
+  const [deletePw, setDeletePw] = useState('')
   const [deleting, setDeleting] = useState(false)
 
   function onAvatar(e: ChangeEvent<HTMLInputElement>) {
@@ -147,10 +148,10 @@ export default function Settings() {
   }
 
   async function onDelete() {
-    if (confirmText !== 'DELETE' || deleting) return
+    if (confirmText !== 'DELETE' || !deletePw || deleting) return
     setDeleting(true)
     try {
-      const res = await deleteAccount('DELETE')
+      const res = await deleteAccount('DELETE', deletePw)
       if (!res.success) throw new Error(res.error)
       try {
         await apiLogout()
@@ -273,16 +274,25 @@ export default function Settings() {
             if (deleting) return
             setDeleteOpen(false)
             setConfirmText('')
+            setDeletePw('')
           }}
           title="Delete your account?"
           description="This can’t be undone."
           size="sm"
           footer={
             <>
-              <Button variant="secondary" onClick={() => setDeleteOpen(false)} disabled={deleting}>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setDeleteOpen(false)
+                  setConfirmText('')
+                  setDeletePw('')
+                }}
+                disabled={deleting}
+              >
                 Cancel
               </Button>
-              <Button variant="danger" onClick={onDelete} loading={deleting} disabled={confirmText !== 'DELETE'}>
+              <Button variant="danger" onClick={onDelete} loading={deleting} disabled={confirmText !== 'DELETE' || !deletePw}>
                 Delete forever
               </Button>
             </>
@@ -294,6 +304,7 @@ export default function Settings() {
               Everything tied to {user?.email} is deleted immediately.
             </p>
             <Field label="Type DELETE to confirm" value={confirmText} onChange={(e) => setConfirmText(e.target.value)} autoComplete="off" autoCapitalize="characters" spellCheck={false} />
+            <PasswordField label="Your password" autoComplete="current-password" value={deletePw} onChange={(e) => setDeletePw(e.target.value)} />
           </div>
         </Dialog>
       </PageContainer>
