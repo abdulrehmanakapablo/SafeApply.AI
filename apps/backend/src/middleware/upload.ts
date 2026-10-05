@@ -7,6 +7,7 @@
 
 import multer from 'multer'
 import type { Request, Response, NextFunction } from 'express'
+import { zipWithinLimits } from '../utils/zipGuard'
 
 const PDF = 'application/pdf'
 const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
@@ -54,6 +55,9 @@ export function verifyUpload(req: Request, _res: Response, next: NextFunction): 
 
   if ((f.mimetype === PDF && !isPdf) || (f.mimetype === DOCX && !isDocx)) {
     return next(rejection('That file is damaged or isn’t really a PDF or Word document.'))
+  }
+  if (isDocx && !zipWithinLimits(b)) {
+    return next(rejection('That Word file is too big to read once unpacked. Save it again or upload a PDF.'))
   }
   // Encrypted PDFs can't be read and are a common malware wrapper.
   if (isPdf && b.includes(Buffer.from('/Encrypt'))) {
