@@ -2,11 +2,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../src/config/env', () => ({ env: { redisUrl: 'https://example.upstash.io', redisToken: 't', ipHashSecret: 's' } }))
 
-import { UpstashStore } from '../../src/middleware/rateLimitStore'
+import { UpstashStore, resetRedisCooldown } from '../../src/middleware/rateLimitStore'
 
 const opts = { windowMs: 60_000 } as never
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  resetRedisCooldown()
+})
 
 describe('UpstashStore', () => {
   it('counts with one EVAL and never sends the raw key', async () => {
@@ -28,5 +31,14 @@ describe('UpstashStore', () => {
     store.init(opts)
     expect((await store.increment('k')).totalHits).toBe(1)
     expect((await store.increment('k')).totalHits).toBe(2)
+  })
+  it('after a failure, keeps counting in memory instead of splitting with Redis', async () => {
+    const fetchMock = vi.fn().mockRejectedValueOnce(new Error('timeout')).mockResolvedValue({ ok: true, json: async () => ({ result: [99, 1000] }) })
+    vi.stubGlobal('fetch', fetchMock)
+    const store = new UpstashStore('t3')
+    store.init(opts)
+    expect((await store.increment('k')).totalHits).toBe(1)
+    expect((await store.increment('k')).totalHits).toBe(2)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })

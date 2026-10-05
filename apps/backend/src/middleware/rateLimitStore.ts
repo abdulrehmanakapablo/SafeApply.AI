@@ -7,7 +7,8 @@
 //   • Keys are HMAC-hashed: no emails or IPs are stored in Redis.
 //   • If Redis is unset or unreachable, counting falls back to this
 //     instance's memory, so limits weaken instead of failing open entirely
-//     or blocking everyone.
+//     or blocking everyone. After a failure, Redis is skipped for 30 s so a
+//     flaky connection can't split one counter between Redis and memory.
 // ============================================================
 
 import { createHmac } from 'crypto'
@@ -19,16 +20,35 @@ const SCRIPT =
   "if c == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end " +
   "return {c, redis.call('PTTL', KEYS[1])}"
 
+const RETRY_AFTER_MS = 30_000
+let redisDownUntil = 0
+
 async function upstash(command: (string | number)[]): Promise<unknown> {
+  if (Date.now() < redisDownUntil) throw new Error('redis cooling down')
   const res = await fetch(env.redisUrl, {
     method: 'POST',
     headers: { Authorization: `Bearer ${env.redisToken}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(command),
-    signal: AbortSignal.timeout(1500),
+    signal: AbortSignal.timeout(2500),
   })
   const data = (await res.json()) as { result?: unknown; error?: string }
   if (!res.ok || data.error) throw new Error(data.error || `upstash ${res.status}`)
   return data.result
+}
+
+/** Calls Upstash; on any failure, pauses Redis use so counting stays in one place. */
+async function upstashOrCool(command: (string | number)[]): Promise<unknown> {
+  try {
+    return await upstash(command)
+  } catch (e) {
+    if (!(e instanceof Error && e.message === 'redis cooling down')) redisDownUntil = Date.now() + RETRY_AFTER_MS
+    throw e
+  }
+}
+
+/** Test helper: forget a previous outage. */
+export function resetRedisCooldown(): void {
+  redisDownUntil = 0
 }
 
 export const sharedStoreAvailable = (): boolean => Boolean(env.redisUrl && env.redisToken)
@@ -58,7 +78,7 @@ export class UpstashStore implements Store {
 
   async increment(key: string): Promise<IncrementResponse> {
     try {
-      const [hits, ttl] = (await upstash(['EVAL', SCRIPT, 1, this.key(key), this.windowMs])) as [number, number]
+      const [hits, ttl] = (await upstashOrCool(['EVAL', SCRIPT, 1, this.key(key), this.windowMs])) as [number, number]
       return { totalHits: Number(hits), resetTime: new Date(Date.now() + (Number(ttl) > 0 ? Number(ttl) : this.windowMs)) }
     } catch (e) {
       this.warn(e)
@@ -68,7 +88,7 @@ export class UpstashStore implements Store {
 
   async decrement(key: string): Promise<void> {
     try {
-      await upstash(['DECR', this.key(key)])
+      await upstashOrCool(['DECR', this.key(key)])
     } catch {
       await this.fallback.decrement(key)
     }
@@ -76,7 +96,7 @@ export class UpstashStore implements Store {
 
   async resetKey(key: string): Promise<void> {
     try {
-      await upstash(['DEL', this.key(key)])
+      await upstashOrCool(['DEL', this.key(key)])
     } catch {
       await this.fallback.resetKey(key)
     }
