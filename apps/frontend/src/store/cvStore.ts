@@ -45,6 +45,9 @@ export type CVTab = 'analysis' | 'build'
 type CVUpdater = CVData | ((prev: CVData) => CVData)
 
 interface CVStore {
+  /** Account this data belongs to. Checked against the signed-in user on load. */
+  ownerId: string | null
+
   // ── CVMatch raw inputs ────────────────────────────────
   cvText: string
   jdText: string
@@ -87,6 +90,7 @@ interface CVStore {
 export const useCVStore = create<CVStore>()(
   persist(
     (set) => ({
+      ownerId: null,
       cvText: '',
       jdText: '',
       uploadedFileName: '',

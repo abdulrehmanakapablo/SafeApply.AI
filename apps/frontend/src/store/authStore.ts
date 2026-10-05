@@ -6,7 +6,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Portal } from '../lib/roles'
-import { clearUserData } from '../lib/session'
+import { clearUserData, ensureOwner } from '../lib/session'
 
 export interface User {
   id: string
@@ -42,7 +42,7 @@ interface AuthState {
 
 export const useAuthStore = create<AuthState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       user: null,
       token: null,
       isAuthenticated: false,
@@ -51,8 +51,8 @@ export const useAuthStore = create<AuthState>()(
       setAdminPortal: (adminPortal) => set({ adminPortal }),
 
       login: (user, token) => {
-        // A different account on this browser: drop the previous one's data.
-        if (get().user?.id !== user.id) clearUserData()
+        // Data saved by any other account on this browser is wiped first.
+        ensureOwner(user.id)
         localStorage.setItem('access_token', token)
         set({ user, token, isAuthenticated: true })
       },
@@ -77,6 +77,10 @@ export const useAuthStore = create<AuthState>()(
         isAuthenticated: state.isAuthenticated,
         adminPortal: state.adminPortal,
       }),
+      // On every page load: wipe saved CV data that belongs to another account.
+      onRehydrateStorage: () => (state) => {
+        ensureOwner(state?.user?.id ?? null)
+      },
     },
   ),
 )

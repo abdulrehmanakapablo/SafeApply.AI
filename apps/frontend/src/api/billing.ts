@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from 'react'
 import api from '../lib/axios'
+import { onUserCleared } from '../lib/session'
 
 type Ok<T> = { success: boolean; data: T; message?: string; error?: string }
 
@@ -104,6 +105,8 @@ let statusCache: { at: number; p: Promise<BillingStatus> } | null = null
 export function invalidateBillingStatus() {
   statusCache = null
 }
+// Plan and usage belong to one account: drop them on logout or account switch.
+onUserCleared(invalidateBillingStatus)
 export function useBillingStatus(enabled = true): BillingStatus | null {
   const [s, setS] = useState<BillingStatus | null>(null)
   useEffect(() => {
