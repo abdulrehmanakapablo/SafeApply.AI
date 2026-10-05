@@ -5,6 +5,8 @@
 //   • on Vercel: apps/frontend/api/[...path].ts exports it as a function
 // ============================================================
 
+// First, before anything else: browser classes pdf.js expects (see pdfGlobals.ts).
+import './pdfGlobals'
 import './config/env'
 
 import express, { type Express } from 'express'
