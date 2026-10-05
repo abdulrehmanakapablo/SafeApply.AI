@@ -5,12 +5,15 @@
 //          can't rotate addresses). Logged-in routes key on the user id, so
 //          people behind one office/university IP don't block each other.
 //
-// NOTE: The default store is in-memory (per server process). If you run
-// more than one instance, switch to a shared store (Redis) so limits add up.
+// STORE: with REDIS_URL + REDIS_TOKEN (Upstash) set, counters are shared
+// across instances (required on serverless). The every-request flood guard
+// stays in memory to keep Redis usage low.
 // ============================================================
 
-import rateLimit, { ipKeyGenerator, type Options } from 'express-rate-limit'
+import rateLimit, { MemoryStore, ipKeyGenerator, type Options } from 'express-rate-limit'
 import type { Request } from 'express'
+import { createHash } from 'crypto'
+import { UpstashStore, sharedStoreAvailable } from './rateLimitStore'
 
 const MIN = 60 * 1000
 const HOUR = 60 * MIN
@@ -19,7 +22,10 @@ const byIp = (req: Request) => ipKeyGenerator(req.ip || '', 56)
 const byUser = (req: Request) => (req.user?.userId ? `u:${req.user.userId}` : `ip:${byIp(req)}`)
 
 function limiter(windowMs: number, limit: number, error: string, extra: Partial<Options> = {}) {
+  // Each limiter gets its own counter namespace.
+  const name = createHash('sha256').update(`${windowMs}:${limit}:${error}`).digest('hex').slice(0, 10)
   return rateLimit({
+    ...(sharedStoreAvailable() ? { store: new UpstashStore(name) } : {}),
     windowMs,
     limit,
     standardHeaders: 'draft-8',
@@ -31,7 +37,7 @@ function limiter(windowMs: number, limit: number, error: string, extra: Partial<
 }
 
 // Every request. Generous enough for a busy SPA session, stops floods.
-export const globalLimiter = limiter(15 * MIN, 600, 'Too many requests. Slow down and try again shortly.')
+export const globalLimiter = limiter(15 * MIN, 600, 'Too many requests. Slow down and try again shortly.', { store: new MemoryStore() })
 
 // Login: per IP+email (stops password guessing on one account) …
 export const loginAccountLimiter = limiter(15 * MIN, 5, 'Too many login attempts for this account. Try again in 15 minutes.', {

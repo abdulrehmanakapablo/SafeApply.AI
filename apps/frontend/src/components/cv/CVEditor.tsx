@@ -38,12 +38,12 @@ import { Badge, Button, Card, ConfirmDialog, Dialog, EmptyState, Field, Icon, Te
 import { apiError } from '../../lib/axios'
 
 // ─── File validation ─────────────────────────────────────
-const MAX_FILE_SIZE = 5 * 1024 * 1024
+const MAX_FILE_SIZE = 4 * 1024 * 1024
 const ALLOWED_MIME = new Set(['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'])
 const ALLOWED_EXT = new Set(['.pdf', '.docx'])
 
 function validateFile(file: File): string | null {
-  if (file.size > MAX_FILE_SIZE) return 'That file is over 5 MB.'
+  if (file.size > MAX_FILE_SIZE) return 'That file is over 4 MB.'
   const name = file.name.toLowerCase()
   if (!ALLOWED_MIME.has(file.type) || !ALLOWED_EXT.has(name.slice(name.lastIndexOf('.')))) return 'Upload a PDF or Word (.docx) file.'
   return null
@@ -861,7 +861,7 @@ export default function CVEditor({ showImport = false, autoLoadFromBackend = fal
             <div
               role="button"
               tabIndex={0}
-              aria-label="Upload a CV. PDF or Word, up to 5 MB."
+              aria-label="Upload a CV. PDF or Word, up to 4 MB."
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault()
@@ -882,7 +882,7 @@ export default function CVEditor({ showImport = false, autoLoadFromBackend = fal
             >
               <Icon name={uploading ? 'progress_activity' : 'upload_file'} className={cn('text-[28px] text-muted', uploading && 'animate-spin text-accent')} />
               <p className="mt-3 text-sm font-medium">{uploading ? 'Reading your file…' : 'Drop a PDF or Word file, or click to choose'}</p>
-              <p className="mt-1 text-xs text-muted">Up to 5 MB</p>
+              <p className="mt-1 text-xs text-muted">Up to 4 MB</p>
               <input ref={fileInputRef} type="file" accept=".pdf,.docx" className="hidden" onChange={onFileSelect} disabled={uploading || structuring} />
             </div>
             <div className="flex flex-col gap-2">

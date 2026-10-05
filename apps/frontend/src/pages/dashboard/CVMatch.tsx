@@ -16,7 +16,7 @@ import { useCVStore } from '../../store/cvStore'
 import { Alert, Badge, Button, Card, CardHeader, EmptyState, Icon, PageContainer, PageHeader, Tabs, TextArea, cn } from '../../components/ui'
 import { apiError } from '../../lib/axios'
 
-const MAX_FILE_SIZE = 5 * 1024 * 1024
+const MAX_FILE_SIZE = 4 * 1024 * 1024
 const ALLOWED_MIME = new Set(['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'])
 const CV_MIN = 100
 const CV_MAX = 15000
@@ -24,7 +24,7 @@ const JD_MIN = 50
 const JD_MAX = 10000
 
 function fileProblem(file: File): string | null {
-  if (file.size > MAX_FILE_SIZE) return 'That file is over 5 MB.'
+  if (file.size > MAX_FILE_SIZE) return 'That file is over 4 MB.'
   const n = file.name.toLowerCase()
   if (!ALLOWED_MIME.has(file.type) || !/\.(pdf|docx)$/.test(n)) return 'Upload a PDF or Word (.docx) file.'
   return null
@@ -165,7 +165,7 @@ export default function CVMatch() {
                 <div
                   role="button"
                   tabIndex={0}
-                  aria-label="Upload a CV. PDF or Word, up to 5 MB."
+                  aria-label="Upload a CV. PDF or Word, up to 4 MB."
                   onClick={() => fileRef.current?.click()}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
@@ -192,7 +192,7 @@ export default function CVMatch() {
                   <Icon name={uploading ? 'progress_activity' : 'upload_file'} className={cn('text-[24px] text-muted shrink-0', uploading && 'animate-spin text-accent')} />
                   <div className="min-w-0">
                     <p className="text-sm font-medium">{uploading ? 'Reading your file…' : 'Drop a PDF or Word file, or click to choose'}</p>
-                    <p className="text-xs text-muted">Up to 5 MB. The text appears below for you to check.</p>
+                    <p className="text-xs text-muted">Up to 4 MB. The text appears below for you to check.</p>
                   </div>
                   <input
                     ref={fileRef}

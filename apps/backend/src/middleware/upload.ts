@@ -1,6 +1,6 @@
 // ============================================================
 // FILE: apps/backend/src/middleware/upload.ts
-// PURPOSE: CV uploads. PDF/DOCX only, 5 MB, one file, memory only.
+// PURPOSE: CV uploads. PDF/DOCX only, 4 MB, one file, memory only.
 //          The browser-supplied MIME type and file name are just claims, so
 //          `verifyUpload` checks the real file signature (magic bytes) too.
 // ============================================================
@@ -34,7 +34,8 @@ function fileFilter(_req: Request, file: Express.Multer.File, cb: multer.FileFil
 export const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 5 * 1024 * 1024,
+    // 4 MB: Vercel functions reject request bodies over 4.5 MB.
+    fileSize: 4 * 1024 * 1024,
     files: 1,
     fields: 5,
     fieldSize: 1024,

@@ -28,7 +28,7 @@ export function errorHandler(err: AppError, req: Request, res: Response, _next: 
 
   if (err instanceof multer.MulterError) {
     status = 400
-    message = err.code === 'LIMIT_FILE_SIZE' ? 'File is larger than 5 MB.' : 'Upload rejected. Send one PDF or Word file.'
+    message = err.code === 'LIMIT_FILE_SIZE' ? 'File is larger than 4 MB.' : 'Upload rejected. Send one PDF or Word file.'
   } else if (err.type === 'entity.too.large') {
     status = 413
     message = 'Request is too large.'

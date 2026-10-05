@@ -70,6 +70,10 @@ export const env = {
   // Used to hash client IPs before they are stored anywhere (Redis keys).
   ipHashSecret: process.env.IP_HASH_SECRET || jwtRefreshSecret,
   trustProxy,
+  // Protects /api/cron. Required for scheduled jobs on Vercel; unset = disabled.
+  cronSecret: process.env.CRON_SECRET || '',
+  // How often the external cron calls /api/cron (minutes). Keep in sync with cron-job.org.
+  cronBeatMinutes: Math.max(5, Math.min(60, parseInt(process.env.CRON_BEAT_MINUTES || '15', 10) || 15)),
   // Email (Resend). Without a key, emails are skipped and logged.
   // Master switch for all outgoing email. Off unless EMAIL_ENABLED=true.
   emailEnabled: process.env.EMAIL_ENABLED === 'true',

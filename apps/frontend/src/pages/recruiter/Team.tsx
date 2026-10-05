@@ -186,7 +186,8 @@ export default function TeamPage() {
 }
 
 function BadgeSnippet({ slug }: { slug: string }) {
-  const src = `${String(api.defaults.baseURL).replace(/\/$/, '')}/badge/${slug}.svg`
+  // Absolute even when the API base is relative (/api), since the snippet runs on other sites.
+  const src = `${new URL(String(api.defaults.baseURL).replace(/\/$/, ''), window.location.origin).href}/badge/${slug}.svg`
   const href = `${window.location.origin}/companies/${slug}`
   const code = `<a href="${href}" target="_blank" rel="noopener"><img src="${src}" alt="Verified employer on SafeApply" width="236" height="44"></a>`
   async function copy() {
