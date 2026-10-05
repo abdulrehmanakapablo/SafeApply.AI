@@ -7,7 +7,7 @@ import axios, { AxiosError, type InternalAxiosRequestConfig } from 'axios'
 import { clearUserData } from './session'
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3000/api',
+  baseURL: import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3000/api' : '/api'),
   timeout: 30_000,
   withCredentials: true,
 })
@@ -107,9 +107,15 @@ api.interceptors.response.use(
 /** Best human-readable message for any API failure. */
 export function apiError(err: unknown, fallback = 'Something went wrong. Please try again.'): string {
   if (axios.isAxiosError(err)) {
-    const data = err.response?.data as { error?: string; errors?: Array<{ message: string }> } | undefined
-    if (data?.errors?.length) return data.errors.map((e) => e.message).join('. ')
-    if (data?.error) return data.error
+    // Always return a string: an error object rendered as a React child crashes the page.
+    const data = err.response?.data as { error?: unknown; message?: unknown; errors?: Array<{ message?: unknown }> } | undefined
+    const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v : '')
+    const list = Array.isArray(data?.errors) ? data.errors.map((e) => text(e?.message)).filter(Boolean) : []
+    if (list.length) return list.join('. ')
+    const e = data?.error
+    const msg = text(e) || (e && typeof e === 'object' ? text((e as { message?: unknown }).message) : '') || text(data?.message)
+    if (msg) return msg
+    if (err.response?.status === 404) return 'That service isn’t available right now. Please try again later.'
     if (err.code === 'ECONNABORTED') return 'The request took too long. Please try again.'
     if (!err.response) return 'Can’t reach the server. Check your connection.'
   }
