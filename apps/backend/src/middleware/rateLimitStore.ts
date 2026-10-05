@@ -38,7 +38,8 @@ export class UpstashStore implements Store {
   private readonly fallback = new MemoryStore()
   private warned = false
 
-  constructor(private readonly prefix: string) {}
+  // Not named `prefix`: express-rate-limit's Store interface reserves that (public) name.
+  constructor(private readonly namespace: string) {}
 
   init(options: Options): void {
     this.windowMs = options.windowMs
@@ -46,7 +47,7 @@ export class UpstashStore implements Store {
   }
 
   private key(k: string): string {
-    return `rl:${this.prefix}:${createHmac('sha256', env.ipHashSecret).update(k).digest('hex').slice(0, 32)}`
+    return `rl:${this.namespace}:${createHmac('sha256', env.ipHashSecret).update(k).digest('hex').slice(0, 32)}`
   }
 
   private warn(e: unknown): void {
