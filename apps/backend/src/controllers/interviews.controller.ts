@@ -52,7 +52,11 @@ async function load(req: Request, res: Response, act = true): Promise<Ctx | null
     .from('job_applications')
     .select('id, user_id, stage, job:jobs!inner(title, company:companies!inner(name, verification_status))')
     .eq('id', iv.application_id)
-    .single()
+    .maybeSingle()
+  if (!app) {
+    sendError(res, 'Interview not found', 404)
+    return null
+  }
   const job = app.job as unknown as { title: string; company: { name: string; verification_status: string } }
   let side: Side | null = null
   if (app.user_id === uid) side = 'candidate'
