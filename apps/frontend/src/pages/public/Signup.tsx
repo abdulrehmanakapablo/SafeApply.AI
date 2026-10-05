@@ -45,6 +45,8 @@ interface Form {
   email: string
   phone_code: string
   phone: string
+  github: string
+  portfolio: string
   password: string
   confirm: string
   terms: boolean
@@ -52,6 +54,10 @@ interface Form {
 type Errors = Partial<Record<keyof Form, string>>
 
 const FREE_DOMAINS = new Set(['gmail.com', 'googlemail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'live.com', 'msn.com', 'icloud.com', 'me.com', 'aol.com', 'proton.me', 'protonmail.com', 'gmx.com', 'mail.com', 'yandex.com', 'zoho.com'])
+
+// Quick client checks; the server normalises and has the final say.
+const GH_RE = /^(@?[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}|(https?:\/\/)?(www\.)?github\.com\/[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}\/?)$/
+const PORTFOLIO_RE = /^(https:\/\/)?[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+([/?#]\S*)?$/
 
 function safePath(raw: string | null): string | null {
   if (!raw) return null
@@ -79,6 +85,8 @@ export default function Signup() {
     email: '',
     phone_code: '+1',
     phone: '',
+    github: '',
+    portfolio: '',
     password: '',
     confirm: '',
     terms: false,
@@ -92,6 +100,9 @@ export default function Signup() {
     if (errors[k]) setErrors((p) => ({ ...p, [k]: undefined }))
   }
 
+  // Country code + national number, without the local trunk 0 (0300… → +92300…).
+  const phoneE164 = () => `${form.phone_code}${form.phone.replace(/\D/g, '').replace(/^0+/, '')}`
+
   function validate(): boolean {
     const e: Errors = {}
     const full = `${form.first_name.trim()} ${form.last_name.trim()}`.trim()
@@ -101,8 +112,11 @@ export default function Signup() {
     if (!form.email.trim()) e.email = 'Enter your email'
     else if (!EMAIL_RE.test(form.email.trim())) e.email = 'That doesn’t look like an email address'
     else if (recruiter && FREE_DOMAINS.has(form.email.trim().toLowerCase().split('@')[1])) e.email = 'Use your work email so we can verify your company'
-    const digits = form.phone.replace(/\D/g, '')
-    if (digits && (digits.length < 6 || digits.length + form.phone_code.length - 1 > 15)) e.phone = 'Check the number'
+    const total = phoneE164().length - 1
+    if (!form.phone.replace(/\D/g, '')) e.phone = 'Enter your phone number'
+    else if (total < 8 || total > 15) e.phone = 'Check the number'
+    if (form.github.trim() && !GH_RE.test(form.github.trim())) e.github = 'Use your GitHub username or github.com/yourname'
+    if (form.portfolio.trim() && !PORTFOLIO_RE.test(form.portfolio.trim())) e.portfolio = 'Use a full https:// link'
     if (!form.password) e.password = 'Choose a password'
     else if (!passwordOk(form.password)) e.password = 'Meet all four requirements below'
     if (!form.confirm) e.confirm = 'Type the password again'
@@ -118,12 +132,13 @@ export default function Signup() {
     setLoading(true)
     setFormError('')
     const email = form.email.toLowerCase().trim()
-    const digits = form.phone.replace(/\D/g, '')
     try {
       const res = await apiSignup({
         full_name: `${form.first_name.trim()} ${form.last_name.trim()}`,
         email,
-        phone: digits ? `${form.phone_code}${digits}` : undefined,
+        phone: phoneE164(),
+        github_url: form.github.trim() || undefined,
+        portfolio_url: form.portfolio.trim() || undefined,
         password: form.password,
         confirm_password: form.confirm,
         role,
@@ -230,7 +245,7 @@ export default function Signup() {
 
           <div className="flex flex-col gap-1.5">
             <span className="text-[13px] font-medium">
-              Phone <span className="text-muted font-normal ml-1">Optional</span>
+              Phone
             </span>
             <div className="grid grid-cols-[minmax(0,9.5rem)_1fr] gap-2">
               <Select
@@ -245,11 +260,34 @@ export default function Signup() {
                 inputMode="tel"
                 autoComplete="tel-national"
                 value={form.phone}
-                onChange={(e) => set('phone', e.target.value.replace(/[^\d\s-]/g, ''))}
+                onChange={(e) => set('phone', e.target.value.replace(/[^\d\s-]/g, '').slice(0, 20))}
                 error={errors.phone}
+                required
               />
             </div>
           </div>
+
+          <Field
+            label="GitHub"
+            optional
+            inputMode="url"
+            autoComplete="url"
+            placeholder="github.com/yourname"
+            maxLength={200}
+            value={form.github}
+            onChange={(e) => set('github', e.target.value)}
+            error={errors.github}
+          />
+          <Field
+            label="Portfolio"
+            optional
+            inputMode="url"
+            placeholder="https://yourname.dev"
+            maxLength={300}
+            value={form.portfolio}
+            onChange={(e) => set('portfolio', e.target.value)}
+            error={errors.portfolio}
+          />
 
           <PasswordField
             label="Password"

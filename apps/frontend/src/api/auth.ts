@@ -7,7 +7,9 @@ import type { User } from '../store/authStore'
 export interface SignupPayload {
   full_name: string
   email: string
-  phone?: string
+  phone: string
+  github_url?: string
+  portfolio_url?: string
   password: string
   confirm_password: string
   role?: 'user' | 'recruiter' | 'freelancer' | 'client'

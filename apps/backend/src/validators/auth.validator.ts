@@ -2,6 +2,7 @@
 // PURPOSE: Joi schemas for every auth-related route.
 
 import Joi from 'joi'
+import { normalizeGithub, normalizePhone, normalizePortfolio } from '../utils/profileLinks'
 
 // ─── SIGNUP ──────────────────────────────────────────────
 export const signupSchema = Joi.object({
@@ -17,7 +18,30 @@ export const signupSchema = Joi.object({
       'string.email': 'Please enter a valid email address',
       'any.required': 'Email is required',
     }),
-  phone: Joi.string().trim().min(7).max(20).optional().allow(''),
+  phone: Joi.string()
+    .trim()
+    .max(24)
+    .required()
+    .custom((v, h) => normalizePhone(v) ?? h.error('any.invalid'))
+    .messages({
+      'any.required': 'Phone number is required',
+      'string.empty': 'Phone number is required',
+      'any.invalid': 'Enter a valid phone number with country code',
+    }),
+  github_url: Joi.string()
+    .trim()
+    .max(200)
+    .allow('', null)
+    .default(null)
+    .custom((v, h) => (v ? normalizeGithub(v) ?? h.error('any.invalid') : null))
+    .messages({ 'any.invalid': 'Enter a GitHub profile, e.g. github.com/yourname' }),
+  portfolio_url: Joi.string()
+    .trim()
+    .max(300)
+    .allow('', null)
+    .default(null)
+    .custom((v, h) => (v ? normalizePortfolio(v) ?? h.error('any.invalid') : null))
+    .messages({ 'any.invalid': 'Enter a full https:// link to your portfolio' }),
   // 'admin' can never be requested here.
   role: Joi.string().valid('user', 'recruiter', 'freelancer', 'client').default('user'),
   password: Joi.string().min(8).max(128).required().messages({
