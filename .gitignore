@@ -54,3 +54,4 @@ coverage/
 .sec-audit/
 graphify-out/
 .superpowers/
+!apps/frontend/.env.production
