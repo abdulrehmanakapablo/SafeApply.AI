@@ -6,6 +6,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Portal } from '../lib/roles'
+import { clearUserData } from '../lib/session'
 
 export interface User {
   id: string
@@ -41,7 +42,7 @@ interface AuthState {
 
 export const useAuthStore = create<AuthState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       user: null,
       token: null,
       isAuthenticated: false,
@@ -50,12 +51,15 @@ export const useAuthStore = create<AuthState>()(
       setAdminPortal: (adminPortal) => set({ adminPortal }),
 
       login: (user, token) => {
+        // A different account on this browser: drop the previous one's data.
+        if (get().user?.id !== user.id) clearUserData()
         localStorage.setItem('access_token', token)
         set({ user, token, isAuthenticated: true })
       },
 
       logout: () => {
         localStorage.removeItem('access_token')
+        clearUserData()
         set({ user: null, token: null, isAuthenticated: false, adminPortal: null })
       },
 

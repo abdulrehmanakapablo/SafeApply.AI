@@ -4,6 +4,7 @@
 //          error into a human sentence for the UI.
 
 import axios, { AxiosError, type InternalAxiosRequestConfig } from 'axios'
+import { clearUserData } from './session'
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3000/api',
@@ -87,6 +88,7 @@ api.interceptors.response.use(
       } catch (refreshErr) {
         localStorage.removeItem('access_token')
         localStorage.removeItem('safeapply-auth')
+        clearUserData()
         onRefreshDone(null)
         if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
           const from = encodeURIComponent(window.location.pathname + window.location.search)

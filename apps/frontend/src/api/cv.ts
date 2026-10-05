@@ -4,6 +4,7 @@
 // NOTE: structureCV streams NDJSON progress events via raw fetch.
 
 import api from '../lib/axios'
+import { clearUserData } from '../lib/session'
 
 // ─── Types ────────────────────────────────────────────────
 export interface CVPersonal {
@@ -239,6 +240,7 @@ async function fetchStructureStream(
     if (res.status === 401) {
       localStorage.removeItem('access_token')
       localStorage.removeItem('safeapply-auth')
+      clearUserData()
       if (
         typeof window !== 'undefined' &&
         !window.location.pathname.startsWith('/login')
