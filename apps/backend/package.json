@@ -7,7 +7,8 @@
     "dev": "ts-node-dev --respawn --transpile-only --exit-child src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "lint": "eslint src --ext .ts"
+    "lint": "eslint src --ext .ts",
+    "test": "vitest run"
   },
   "dependencies": {
     "@safeapply/shared": "workspace:*",
@@ -41,7 +42,11 @@
     "@types/morgan": "^1.9.10",
     "@types/multer": "^2.2.0",
     "@types/node": "^26.6.1",
+    "@types/supertest": "^6.0.3",
+    "jszip": "^3.10.2",
+    "supertest": "^7.3.1",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "vitest": "^3.2.7"
   }
 }
