@@ -31,6 +31,7 @@ import { authMiddleware } from '../middleware/auth'
 import {
   authLimiter,
   loginAccountLimiter,
+  loginEmailLimiter,
   signupLimiter,
   forgotPasswordLimiter,
   resetPasswordLimiter,
@@ -42,7 +43,7 @@ const router: ExpressRouter = Router()
 
 // ─── PUBLIC ───────────────────────────────────────────────
 router.post('/signup', signupLimiter, authLimiter, validate(signupSchema), signup)
-router.post('/login', authLimiter, validate(loginSchema), loginAccountLimiter, login)
+router.post('/login', authLimiter, validate(loginSchema), loginAccountLimiter, loginEmailLimiter, login)
 router.post('/refresh', refreshLimiter, refreshToken)
 router.post('/logout', refreshLimiter, logout)
 router.post('/forgot-password', forgotPasswordLimiter, validate(forgotPasswordSchema), forgotPassword)

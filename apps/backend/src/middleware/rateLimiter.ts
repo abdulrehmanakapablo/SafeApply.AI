@@ -38,6 +38,13 @@ export const loginAccountLimiter = limiter(15 * MIN, 5, 'Too many login attempts
   keyGenerator: (req) => `${byIp(req)}:${String(req.body?.email || '').toLowerCase().trim().slice(0, 254)}`,
   skipSuccessfulRequests: true,
 })
+// … per account from every IP (stops one account being guessed from a botnet;
+// the cost is that a flood can lock that account's login for an hour) …
+export const loginEmailKey = (req: Request) => `email:${String(req.body?.email || '').toLowerCase().trim().slice(0, 254)}`
+export const loginEmailLimiter = limiter(HOUR, 30, 'Too many login attempts for this account. Try again in an hour.', {
+  keyGenerator: loginEmailKey,
+  skipSuccessfulRequests: true,
+})
 // … and per IP overall (stops spraying many accounts from one machine).
 export const authLimiter = limiter(15 * MIN, 20, 'Too many attempts. Try again in 15 minutes.')
 
