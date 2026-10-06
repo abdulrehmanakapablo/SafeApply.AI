@@ -6,8 +6,59 @@
 //           parser) and the extracted text is capped.
 // ============================================================
 
-import { PDFParse } from 'pdf-parse'
 import mammoth from 'mammoth'
+import { preparePdfRuntime } from '../utils/pdfRuntime'
+
+// pdf-parse is loaded on first use, not at startup, so a problem with it can
+// only affect PDF uploads and never takes the whole server down.
+//
+// Serverless (Vercel): pdf.js runs its "worker" in-process on Node and finds it
+// by importing pdf.worker.mjs from a path computed at runtime. The bundler can't
+// see that path, so the file is missing and every parse fails. Requiring
+// 'pdf-parse/worker' by its literal name makes the bundler ship it; loading it
+// registers globalThis.pdfjsWorker, which pdf.js uses instead of the file.
+// It also gives a CanvasFactory backed by @napi-rs/canvas.
+type PDFParseClass = typeof import('pdf-parse').PDFParse
+type WorkerModule = { CanvasFactory?: unknown; getPath?: () => string }
+let PDFParse: PDFParseClass | null = null
+let canvasFactory: unknown
+
+function workerReady(): boolean {
+  const w = (globalThis as { pdfjsWorker?: { WorkerMessageHandler?: unknown } }).pdfjsWorker
+  return !!w?.WorkerMessageHandler
+}
+
+async function loadPdfParse(): Promise<PDFParseClass> {
+  if (PDFParse) return PDFParse
+  preparePdfRuntime()
+  const mod = (await import('pdf-parse')).PDFParse
+
+  let worker: WorkerModule | null = null
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    worker = require('pdf-parse/worker') as WorkerModule
+    canvasFactory = worker.CanvasFactory
+  } catch (e) {
+    console.error('[pdf] worker module failed to load:', e instanceof Error ? e.message : String(e))
+  }
+  // The worker module registers pdf.js's handler asynchronously; wait briefly.
+  for (let i = 0; i < 50 && !workerReady(); i++) await new Promise((r) => setTimeout(r, 50))
+  if (!workerReady() && worker?.getPath) {
+    try {
+      mod.setWorker(worker.getPath())
+    } catch {
+      /* fall through: pdf.js will try its default worker location */
+    }
+  }
+
+  PDFParse = mod
+  return PDFParse
+}
+
+// Error text from pdf.js describes the parser failure, never the CV contents.
+function reason(e: unknown): string {
+  return (e instanceof Error ? `${e.name}: ${e.message}` : String(e)).slice(0, 300)
+}
 
 const PARSE_TIMEOUT_MS = 15_000
 const MAX_TEXT_CHARS = 60_000
@@ -30,14 +81,15 @@ function clean(text: string): string {
 }
 
 export async function parsePDF(buffer: Buffer): Promise<string> {
-  let parser: PDFParse | null = null
+  let parser: InstanceType<PDFParseClass> | null = null
   try {
-    parser = new PDFParse({ data: buffer })
+    const Parser = await loadPdfParse()
+    parser = new Parser(canvasFactory ? { data: buffer, CanvasFactory: canvasFactory as never } : { data: buffer })
     const result = await withTimeout(parser.getText({}))
     return clean(result?.text ?? '')
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('CV parsing timed out')) throw error
-    console.error('PDF parse error')
+    console.error('[pdf] parse failed:', reason(error))
     throw new Error('Failed to parse PDF file')
   } finally {
     if (parser) {
@@ -56,7 +108,7 @@ export async function parseDOCX(buffer: Buffer): Promise<string> {
     return clean(result.value || '')
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('CV parsing timed out')) throw error
-    console.error('DOCX parse error')
+    console.error('[docx] parse failed:', reason(error))
     throw new Error('Failed to parse DOCX file')
   }
 }
